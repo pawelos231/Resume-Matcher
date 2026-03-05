@@ -5,6 +5,10 @@ import copy
 import json
 import logging
 import re
+from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException
@@ -25,6 +29,7 @@ from app.schemas.enrichment import (
     ApplyEnhancementsRequest,
     EnhancedDescription,
     EnhanceRequest,
+    EnhanceSupportContext,
     EnhancementPreview,
     EnrichmentItem,
     EnrichmentQuestion,
@@ -39,6 +44,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/enrichment", tags=["Enrichment"])
 
+_GITHUB_USERNAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
+_GITHUB_TIMEOUT_SECONDS = 8
+_GITHUB_HEADERS = {
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "resume-matcher/1.0",
+}
+
 
 def _get_content_language() -> str:
     """Get content language from stored config."""
@@ -51,6 +63,198 @@ def _get_content_language() -> str:
     except (OSError, json.JSONDecodeError) as e:
         logger.warning(f"Failed to read content language from config: {e}")
     return "en"
+
+
+def _normalize_support_text(value: object) -> str | None:
+    """Normalize user-provided support text values."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    normalized = value.strip()
+    return normalized or None
+
+
+def _extract_github_username(profile_hint: str | None) -> str | None:
+    """Extract GitHub username from a URL or raw username input."""
+    normalized = _normalize_support_text(profile_hint)
+    if not normalized:
+        return None
+
+    candidate = normalized
+    normalized_lower = normalized.lower()
+    if "github.com" in normalized_lower:
+        parsed = urlparse(
+            normalized if "://" in normalized else f"https://{normalized}"
+        )
+        if parsed.netloc.lower() not in {"github.com", "www.github.com"}:
+            return None
+        path_parts = [part for part in parsed.path.split("/") if part]
+        if not path_parts:
+            return None
+        candidate = path_parts[0]
+    else:
+        candidate = normalized.strip("/")
+        if "/" in candidate:
+            return None
+
+    candidate = candidate.lstrip("@")
+    if candidate.endswith(".git"):
+        candidate = candidate[:-4]
+    if not candidate or candidate.endswith("-"):
+        return None
+    if not _GITHUB_USERNAME_RE.fullmatch(candidate):
+        return None
+    return candidate
+
+
+def _fetch_json_from_url(url: str) -> Any:
+    """Fetch and decode JSON payload from a URL."""
+    request = Request(url=url, headers=_GITHUB_HEADERS)
+    with urlopen(request, timeout=_GITHUB_TIMEOUT_SECONDS) as response:
+        charset = response.headers.get_content_charset() or "utf-8"
+        body = response.read().decode(charset)
+    return json.loads(body)
+
+
+async def _fetch_github_profile_snapshot(profile_hint: str | None) -> str | None:
+    """Fetch a concise GitHub profile + repo summary for prompt support context."""
+    username = _extract_github_username(profile_hint)
+    if not username:
+        return None
+
+    profile_url = f"https://api.github.com/users/{username}"
+    repos_url = f"https://api.github.com/users/{username}/repos?sort=updated&per_page=5"
+
+    try:
+        profile_data, repos_data = await asyncio.gather(
+            asyncio.to_thread(_fetch_json_from_url, profile_url),
+            asyncio.to_thread(_fetch_json_from_url, repos_url),
+        )
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as error:
+        logger.warning("Failed to fetch GitHub support data for %s: %s", username, error)
+        return None
+    except Exception as error:
+        logger.warning(
+            "Unexpected error while fetching GitHub support data for %s",
+            username,
+            exc_info=error,
+        )
+        return None
+
+    if not isinstance(profile_data, dict):
+        return None
+
+    repos_list = repos_data if isinstance(repos_data, list) else []
+
+    lines: list[str] = [f"GitHub username: {username}"]
+    name = _normalize_support_text(profile_data.get("name"))
+    bio = _normalize_support_text(profile_data.get("bio"))
+    company = _normalize_support_text(profile_data.get("company"))
+    location = _normalize_support_text(profile_data.get("location"))
+
+    if name:
+        lines.append(f"Name: {name}")
+    if bio:
+        lines.append(f"Bio: {bio}")
+    if company:
+        lines.append(f"Company: {company}")
+    if location:
+        lines.append(f"Location: {location}")
+
+    followers = profile_data.get("followers")
+    public_repos = profile_data.get("public_repos")
+    if isinstance(followers, int):
+        lines.append(f"Followers: {followers}")
+    if isinstance(public_repos, int):
+        lines.append(f"Public repositories: {public_repos}")
+
+    language_set: set[str] = set()
+    repo_lines: list[str] = []
+    for repo in repos_list:
+        if not isinstance(repo, dict):
+            continue
+        repo_name = _normalize_support_text(repo.get("name"))
+        if not repo_name:
+            continue
+
+        language = _normalize_support_text(repo.get("language"))
+        if language:
+            language_set.add(language)
+
+        meta_parts: list[str] = []
+        if language:
+            meta_parts.append(language)
+        stars = repo.get("stargazers_count")
+        if isinstance(stars, int):
+            meta_parts.append(f"stars {stars}")
+
+        repo_description = _normalize_support_text(repo.get("description"))
+        line = repo_name
+        if meta_parts:
+            line += f" ({', '.join(meta_parts)})"
+        if repo_description:
+            line += f": {repo_description}"
+
+        repo_lines.append(line)
+        if len(repo_lines) == 3:
+            break
+
+    if language_set:
+        lines.append(f"Main languages: {', '.join(sorted(language_set))}")
+    if repo_lines:
+        lines.append("Recent repositories:")
+        for repo_line in repo_lines:
+            lines.append(f"- {repo_line}")
+
+    return "\n".join(lines)
+
+
+async def _build_supporting_context_text(
+    support_context: EnhanceSupportContext | None,
+) -> str:
+    """Build optional support context text for enhancement prompts."""
+    if support_context is None:
+        return "No external support data provided."
+
+    sections: list[str] = []
+
+    github = support_context.github
+    if github and github.enabled:
+        github_lines: list[str] = []
+        github_snapshot = await _fetch_github_profile_snapshot(github.profile)
+        github_profile = _normalize_support_text(github.profile)
+        github_notes = _normalize_support_text(github.notes)
+
+        if github_snapshot:
+            github_lines.append(github_snapshot)
+        elif github_profile:
+            github_lines.append(f"GitHub profile reference: {github_profile}")
+
+        if github_notes:
+            github_lines.append(f"Candidate-provided GitHub notes: {github_notes}")
+
+        if github_lines:
+            sections.append("GitHub Support:\n" + "\n".join(github_lines))
+
+    linkedin = support_context.linkedin
+    if linkedin and linkedin.enabled:
+        linkedin_lines: list[str] = []
+        linkedin_profile = _normalize_support_text(linkedin.profile)
+        linkedin_notes = _normalize_support_text(linkedin.notes)
+
+        if linkedin_profile:
+            linkedin_lines.append(f"LinkedIn profile reference: {linkedin_profile}")
+        if linkedin_notes:
+            linkedin_lines.append(f"Candidate-provided LinkedIn notes: {linkedin_notes}")
+
+        if linkedin_lines:
+            sections.append("LinkedIn Support:\n" + "\n".join(linkedin_lines))
+
+    if not sections:
+        return "No external support data provided."
+
+    return "\n\n".join(sections)
 
 
 @router.post("/analyze/{resume_id}", response_model=AnalysisResponse)
@@ -166,6 +370,8 @@ async def generate_enhancements(request: EnhanceRequest) -> EnhancementPreview:
             detail="Failed to process enhancements. Please try again.",
         )
 
+    supporting_context = await _build_supporting_context_text(request.support_context)
+
     # Build question_id -> item_id mapping
     question_to_item: dict[str, str] = {}
     for q in analysis_result.get("questions", []):
@@ -216,9 +422,6 @@ async def generate_enhancements(request: EnhanceRequest) -> EnhancementPreview:
         # Build enhancement prompt with content language
         current_desc = item.get("current_description", [])
         current_desc_text = "\n".join(f"- {d}" for d in current_desc) if current_desc else "(No description)"
-        
-        language = _get_content_language()
-        output_language = get_language_name(language)
 
         prompt = ENHANCE_DESCRIPTION_PROMPT.format(
             item_type=item.get("item_type", "experience"),
@@ -226,6 +429,7 @@ async def generate_enhancements(request: EnhanceRequest) -> EnhancementPreview:
             subtitle=item.get("subtitle", ""),
             current_description=current_desc_text,
             answers=answers_text.strip(),
+            supporting_context=supporting_context,
             output_language=output_language,
         )
 

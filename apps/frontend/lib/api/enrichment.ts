@@ -33,6 +33,17 @@ export interface AnswerInput {
   answer: string;
 }
 
+export interface SupportSourceInput {
+  enabled: boolean;
+  profile?: string;
+  notes?: string;
+}
+
+export interface EnrichmentSupportContextInput {
+  github?: SupportSourceInput;
+  linkedin?: SupportSourceInput;
+}
+
 export interface EnhancedDescription {
   item_id: string;
   item_type: 'experience' | 'project';
@@ -68,11 +79,13 @@ export async function analyzeResume(resumeId: string): Promise<AnalysisResponse>
  */
 export async function generateEnhancements(
   resumeId: string,
-  answers: AnswerInput[]
+  answers: AnswerInput[],
+  supportContext?: EnrichmentSupportContextInput
 ): Promise<EnhancementPreview> {
   const res = await apiPost('/enrichment/enhance', {
     resume_id: resumeId,
     answers,
+    support_context: supportContext,
   });
 
   if (!res.ok) {

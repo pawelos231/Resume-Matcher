@@ -100,6 +100,79 @@ function filterOffers(offers: SearchOffer[], searchText: string): SearchOffer[] 
   });
 }
 
+function toNumericSalaryValue(salary: string | null): number | null {
+  if (!salary) {
+    return null;
+  }
+
+  const fragments = salary.match(/\d[\d\s,.]*/g) ?? [];
+  const numericValues = fragments
+    .map((fragment) => Number.parseInt(fragment.replace(/[^\d]/g, ''), 10))
+    .filter((value) => Number.isFinite(value));
+
+  if (numericValues.length === 0) {
+    return null;
+  }
+
+  return Math.max(...numericValues);
+}
+
+function compareName(left: SearchOffer, right: SearchOffer): number {
+  const titleCompare = left.title.localeCompare(right.title, undefined, { sensitivity: 'base' });
+  if (titleCompare !== 0) {
+    return titleCompare;
+  }
+
+  const companyCompare = left.company.localeCompare(right.company, undefined, {
+    sensitivity: 'base',
+  });
+  if (companyCompare !== 0) {
+    return companyCompare;
+  }
+
+  return left.url.localeCompare(right.url, undefined, { sensitivity: 'base' });
+}
+
+function sortOffers(
+  offers: SearchOffer[],
+  sortBy: OfferSortBy,
+  sortDirection: OfferSortDirection
+): SearchOffer[] {
+  const cloned = [...offers];
+
+  if (sortBy === 'relevance') {
+    return sortDirection === 'desc' ? cloned.reverse() : cloned;
+  }
+
+  if (sortBy === 'name') {
+    cloned.sort(compareName);
+    return sortDirection === 'desc' ? cloned.reverse() : cloned;
+  }
+
+  return cloned.sort((left, right) => {
+    const leftValue = toNumericSalaryValue(left.salary);
+    const rightValue = toNumericSalaryValue(right.salary);
+
+    if (leftValue === null && rightValue === null) {
+      return compareName(left, right);
+    }
+
+    if (leftValue === null) {
+      return 1;
+    }
+
+    if (rightValue === null) {
+      return -1;
+    }
+
+    if (leftValue === rightValue) {
+      return compareName(left, right);
+    }
+
+    return sortDirection === 'desc' ? rightValue - leftValue : leftValue - rightValue;
+  });
+}
+
 export default function SearchPage() {
   const router = useRouter();
 
@@ -133,13 +206,18 @@ export default function SearchPage() {
     setOfferResumeMap(readOfferResumeMap());
   }, []);
 
+  const sortedOffers = useMemo(
+    () => sortOffers(response?.data ?? [], sortBy, sortDirection),
+    [response, sortBy, sortDirection]
+  );
+
   const statusFilteredOffers = useMemo(() => {
-    const offers = response?.data ?? [];
+    const offers = sortedOffers;
     if (!hideAppliedOffers) {
       return offers;
     }
     return offers.filter((offer) => !offerResumeMap[getOfferRuntimeKey(offer)]);
-  }, [response, hideAppliedOffers, offerResumeMap]);
+  }, [sortedOffers, hideAppliedOffers, offerResumeMap]);
 
   const appliedOffersCount = useMemo(() => {
     const offers = response?.data ?? [];
@@ -348,9 +426,7 @@ export default function SearchPage() {
 
     if (failed > 0) {
       const suffix = failedOffers.length ? ` First errors: ${failedOffers.join(' | ')}` : '';
-      setError(
-        `Bulk generation finished. Success: ${success}, failed: ${failed}.${suffix}`
-      );
+      setError(`Bulk generation finished. Success: ${success}, failed: ${failed}.${suffix}`);
       return;
     }
 
@@ -393,7 +469,9 @@ export default function SearchPage() {
 
         eventSource.addEventListener('progress', (rawEvent) => {
           try {
-            const progressEvent = JSON.parse((rawEvent as MessageEvent).data) as SearchProgressEvent;
+            const progressEvent = JSON.parse(
+              (rawEvent as MessageEvent).data
+            ) as SearchProgressEvent;
             setProgressPercent(Math.max(0, Math.min(100, progressEvent.progressPercent)));
             setProgressMessage(progressEvent.message);
             setProgressBySource(progressEvent.scrapedBySource);
@@ -497,10 +575,13 @@ export default function SearchPage() {
               </label>
 
               <label className="space-y-1">
-                <span className="font-mono text-xs uppercase tracking-wider text-black">Sort By</span>
+                <span className="font-mono text-xs uppercase tracking-wider text-black">
+                  Sort By
+                </span>
                 <select
-                  className="h-10 w-full border border-black bg-transparent px-3 py-2 text-sm rounded-none"
+                  className="h-10 w-full rounded-none border border-black bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-700 disabled:cursor-not-allowed disabled:bg-[#E5E5E0] disabled:text-[#4B5563]"
                   value={sortBy}
+                  disabled={loading}
                   onChange={(event) => setSortBy(event.target.value as OfferSortBy)}
                 >
                   <option value="relevance">relevance</option>
@@ -514,8 +595,9 @@ export default function SearchPage() {
                   Direction
                 </span>
                 <select
-                  className="h-10 w-full border border-black bg-transparent px-3 py-2 text-sm rounded-none"
+                  className="h-10 w-full rounded-none border border-black bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-700 disabled:cursor-not-allowed disabled:bg-[#E5E5E0] disabled:text-[#4B5563]"
                   value={sortDirection}
+                  disabled={loading}
                   onChange={(event) => setSortDirection(event.target.value as OfferSortDirection)}
                 >
                   <option value="asc">asc</option>
@@ -567,7 +649,11 @@ export default function SearchPage() {
                 </label>
               </div>
 
-              <Button type="submit" disabled={loading || isBulkGenerating} className="min-w-[180px]">
+              <Button
+                type="submit"
+                disabled={loading || isBulkGenerating}
+                className="min-w-[180px]"
+              >
                 {loading ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -733,72 +819,76 @@ export default function SearchPage() {
                           Already Applied
                         </span>
                       )}
-                    <p className="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8]">
-                      {offer.source}
-                    </p>
-                    <h3 className="font-serif text-2xl leading-tight">{offer.title}</h3>
-                    <p className="font-sans text-sm text-[#4B5563]">
-                      {offer.company}
-                      {offer.location ? ` - ${offer.location}` : ''}
-                    </p>
-                    {offer.salary && (
-                      <p className="font-mono text-xs uppercase tracking-wider text-[#15803D]">
-                        {offer.salary}
-                      </p>
-                    )}
-                    {offer.skills.length > 0 && (
-                      <p className="font-sans text-sm text-[#4B5563]">
-                        Skills: {offer.skills.join(', ')}
-                      </p>
-                    )}
-                    {offer.matchedKeywords.length > 0 && (
                       <p className="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8]">
-                        Match: {offer.matchedKeywords.join(', ')}
+                        {offer.source}
                       </p>
-                    )}
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => void handleGenerateAndEditResumeFromOffer(offer)}
-                        disabled={Boolean(isBulkGenerating || generatingOfferKey || generatingEditOfferKey)}
-                      >
-                        {generatingEditOfferKey === runtimeKey ? (
-                          <>
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            Preparing Editor
-                          </>
-                        ) : (
-                          'Generate And Edit Resume'
-                        )}
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        onClick={() => void handleGenerateResumeFromOffer(offer)}
-                        disabled={Boolean(isBulkGenerating || generatingOfferKey || generatingEditOfferKey)}
-                      >
-                        {generatingOfferKey === runtimeKey ? (
-                          <>
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            Generating Resume
-                          </>
-                        ) : (
-                          'Generate Resume'
-                        )}
-                      </Button>
-                      <a
-                        href={offer.url}
-                        target="_blank"
-                        rel="noreferrer noopener"
-                        className="inline-flex items-center gap-2 border border-black bg-[#1D4ED8] px-3 py-1 font-mono text-[11px] uppercase tracking-wider text-white shadow-[2px_2px_0px_0px_#000000] transition-all hover:translate-y-[1px] hover:translate-x-[1px] hover:shadow-none"
-                      >
-                        Open Offer
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
+                      <h3 className="font-serif text-2xl leading-tight">{offer.title}</h3>
+                      <p className="font-sans text-sm text-[#4B5563]">
+                        {offer.company}
+                        {offer.location ? ` - ${offer.location}` : ''}
+                      </p>
+                      {offer.salary && (
+                        <p className="font-mono text-xs uppercase tracking-wider text-[#15803D]">
+                          {offer.salary}
+                        </p>
+                      )}
+                      {offer.skills.length > 0 && (
+                        <p className="font-sans text-sm text-[#4B5563]">
+                          Skills: {offer.skills.join(', ')}
+                        </p>
+                      )}
+                      {offer.matchedKeywords.length > 0 && (
+                        <p className="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8]">
+                          Match: {offer.matchedKeywords.join(', ')}
+                        </p>
+                      )}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => void handleGenerateAndEditResumeFromOffer(offer)}
+                          disabled={Boolean(
+                            isBulkGenerating || generatingOfferKey || generatingEditOfferKey
+                          )}
+                        >
+                          {generatingEditOfferKey === runtimeKey ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Preparing Editor
+                            </>
+                          ) : (
+                            'Generate And Edit Resume'
+                          )}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => void handleGenerateResumeFromOffer(offer)}
+                          disabled={Boolean(
+                            isBulkGenerating || generatingOfferKey || generatingEditOfferKey
+                          )}
+                        >
+                          {generatingOfferKey === runtimeKey ? (
+                            <>
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              Generating Resume
+                            </>
+                          ) : (
+                            'Generate Resume'
+                          )}
+                        </Button>
+                        <a
+                          href={offer.url}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="inline-flex items-center gap-2 border border-black bg-[#1D4ED8] px-3 py-1 font-mono text-[11px] uppercase tracking-wider text-white shadow-[2px_2px_0px_0px_#000000] transition-all hover:translate-y-[1px] hover:translate-x-[1px] hover:shadow-none"
+                        >
+                          Open Offer
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      </div>
                     </div>
-                  </div>
-                </Card>
+                  </Card>
                 );
               })}
             </div>

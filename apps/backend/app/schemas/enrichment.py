@@ -40,11 +40,27 @@ class AnswerInput(BaseModel):
     answer: str
 
 
+class SupportSourceInput(BaseModel):
+    """Optional external source data used to enrich resume generation."""
+
+    enabled: bool = False
+    profile: str | None = None
+    notes: str | None = None
+
+
+class EnhanceSupportContext(BaseModel):
+    """Optional support sources selected by the user."""
+
+    github: SupportSourceInput | None = None
+    linkedin: SupportSourceInput | None = None
+
+
 class EnhanceRequest(BaseModel):
     """Request to generate enhanced descriptions from answers."""
 
     resume_id: str
     answers: list[AnswerInput]
+    support_context: EnhanceSupportContext | None = None
 
 
 class EnhancedDescription(BaseModel):

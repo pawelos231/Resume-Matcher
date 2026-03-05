@@ -95,6 +95,9 @@ Current Description (KEEP ALL OF THESE):
 CANDIDATE'S ADDITIONAL CONTEXT:
 {answers}
 
+EXTERNAL SUPPORT DATA (OPTIONAL):
+{supporting_context}
+
 TASK:
 Generate NEW bullet points to ADD to the existing description. The original bullets will be kept as-is.
 New bullets should be:
@@ -103,6 +106,7 @@ New bullets should be:
 3. Technically specific: Mention technologies, tools, and methodologies
 4. Impact-focused: Clearly state the business or technical outcome
 5. Ownership-clear: Show what the candidate personally did vs. the team
+6. Use relevant details from EXTERNAL SUPPORT DATA when they strengthen factual accuracy
 
 OUTPUT FORMAT (JSON only, no other text):
 {{
@@ -122,7 +126,8 @@ IMPORTANT RULES:
 - Keep bullets concise (1-2 lines each)
 - Use past tense for past roles, present tense for current roles
 - Avoid buzzwords and fluff - be specific and concrete
-- Focus on information from the candidate's answers that isn't already in the original bullets"""
+- Focus on information from the candidate's answers or support data that isn't already in the original bullets
+- If support data conflicts with candidate answers, prioritize candidate answers"""
 
 
 # ============================================

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { XIcon, Sparkles } from 'lucide-react';
 import { useEnrichmentWizard } from '@/hooks/use-enrichment-wizard';
+import type { EnrichmentSupportContextInput } from '@/lib/api/enrichment';
 import { useTranslations } from '@/lib/i18n';
 import {
   AnalyzingStep,
@@ -22,9 +23,27 @@ interface EnrichmentModalProps {
   onComplete: () => void;
 }
 
+function createDefaultSupportContext(): EnrichmentSupportContextInput {
+  return {
+    github: {
+      enabled: false,
+      profile: '',
+      notes: '',
+    },
+    linkedin: {
+      enabled: false,
+      profile: '',
+      notes: '',
+    },
+  };
+}
+
 export function EnrichmentModal({ resumeId, isOpen, onClose, onComplete }: EnrichmentModalProps) {
   const { t } = useTranslations();
   const dialogRef = useRef<HTMLDialogElement>(null);
+  const [supportContext, setSupportContext] = useState<EnrichmentSupportContextInput>(
+    createDefaultSupportContext
+  );
 
   const {
     state,
@@ -55,6 +74,7 @@ export function EnrichmentModal({ resumeId, isOpen, onClose, onComplete }: Enric
     } else {
       dialogRef.current?.close();
       document.body.style.overflow = 'auto';
+      setSupportContext(createDefaultSupportContext());
     }
 
     const dialog = dialogRef.current;
@@ -69,12 +89,14 @@ export function EnrichmentModal({ resumeId, isOpen, onClose, onComplete }: Enric
   // Handle close
   const handleClose = () => {
     reset();
+    setSupportContext(createDefaultSupportContext());
     onClose();
   };
 
   // Handle complete
   const handleComplete = () => {
     reset();
+    setSupportContext(createDefaultSupportContext());
     onComplete();
   };
 
@@ -100,7 +122,7 @@ export function EnrichmentModal({ resumeId, isOpen, onClose, onComplete }: Enric
 
   // Handle finish questions - generate enhancements
   const handleFinishQuestions = () => {
-    generateEnhancements();
+    generateEnhancements(supportContext);
   };
 
   if (!isOpen) return null;
@@ -159,6 +181,8 @@ export function EnrichmentModal({ resumeId, isOpen, onClose, onComplete }: Enric
             answer={state.answers[currentQuestion.question_id] || ''}
             questionNumber={state.currentQuestionIndex + 1}
             totalQuestions={totalQuestions}
+            supportContext={supportContext}
+            onSupportContextChange={setSupportContext}
             onAnswer={(answer) => setAnswer(currentQuestion.question_id, answer)}
             onNext={nextQuestion}
             onPrev={prevQuestion}

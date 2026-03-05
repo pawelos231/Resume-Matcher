@@ -508,7 +508,29 @@ export default function DashboardPage() {
           </Card>
         )}
 
-        {/* 2. Tailored Resumes */}
+        {/* 2. Delete All Resumes */}
+        {hasAnyResumes && (
+          <Card className="aspect-square h-full border-2 border-red-600 bg-red-50" variant="default">
+            <div className="flex-1 flex flex-col items-center justify-center text-center h-full">
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setShowDeleteAllDialog(true)}
+                disabled={isDeletingAllResumes}
+                className="w-20 h-20 rounded-none border-2 border-black shadow-sw-default hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-none transition-all"
+              >
+                {isDeletingAllResumes ? (
+                  <Loader2 className="w-8 h-8 animate-spin" />
+                ) : (
+                  <Trash2 className="w-8 h-8" />
+                )}
+              </Button>
+              <p className="text-xs font-mono mt-4 uppercase text-red-700">Delete All Resumes</p>
+            </div>
+          </Card>
+        )}
+
+        {/* 3. Tailored Resumes */}
         {tailoredResumes.map((resume) => {
           const title =
             resume.title || resume.jobSnippet || resume.filename || t('dashboard.tailoredResume');
@@ -584,7 +606,7 @@ export default function DashboardPage() {
           );
         })}
 
-        {/* 3. Create Tailored Resume */}
+        {/* 4. Create Tailored Resume */}
         <Card className="aspect-square h-full" variant="default">
           <div className="flex-1 flex flex-col items-center justify-center text-center h-full">
             <Button
@@ -600,7 +622,7 @@ export default function DashboardPage() {
           </div>
         </Card>
 
-        {/* 4. Search */}
+        {/* 5. Search */}
         <Card className="aspect-square h-full" variant="default">
           <div className="flex-1 flex flex-col items-center justify-center text-center h-full">
             <Button
@@ -612,28 +634,6 @@ export default function DashboardPage() {
             <p className="text-xs font-mono mt-4 uppercase text-blue-700">{t('common.search')}</p>
           </div>
         </Card>
-
-        {/* 5. Delete All Resumes */}
-        {hasAnyResumes && (
-          <Card className="aspect-square h-full" variant="default">
-            <div className="flex-1 flex flex-col items-center justify-center text-center h-full">
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => setShowDeleteAllDialog(true)}
-                disabled={isDeletingAllResumes}
-                className="w-20 h-20 rounded-none border-2 border-black shadow-sw-default hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-none transition-all"
-              >
-                {isDeletingAllResumes ? (
-                  <Loader2 className="w-8 h-8 animate-spin" />
-                ) : (
-                  <Trash2 className="w-8 h-8" />
-                )}
-              </Button>
-              <p className="text-xs font-mono mt-4 uppercase text-red-700">Delete All Resumes</p>
-            </div>
-          </Card>
-        )}
 
         {/* 6. Fillers */}
         {Array.from({ length: fillerCount }).map((_, index) => (

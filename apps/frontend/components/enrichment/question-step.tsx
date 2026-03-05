@@ -1,10 +1,23 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { ToggleSwitch } from '@/components/ui/toggle-switch';
 import { ChevronLeft, ChevronRight, Briefcase, FolderKanban } from 'lucide-react';
-import type { EnrichmentQuestion, EnrichmentItem } from '@/lib/api/enrichment';
+import type {
+  EnrichmentQuestion,
+  EnrichmentItem,
+  EnrichmentSupportContextInput,
+  SupportSourceInput,
+} from '@/lib/api/enrichment';
 import { useTranslations } from '@/lib/i18n';
 
 interface QuestionStepProps {
@@ -13,6 +26,8 @@ interface QuestionStepProps {
   answer: string;
   questionNumber: number;
   totalQuestions: number;
+  supportContext: EnrichmentSupportContextInput;
+  onSupportContextChange: (next: EnrichmentSupportContextInput) => void;
   onAnswer: (answer: string) => void;
   onNext: () => void;
   onPrev: () => void;
@@ -27,6 +42,8 @@ export function QuestionStep({
   answer,
   questionNumber,
   totalQuestions,
+  supportContext,
+  onSupportContextChange,
   onAnswer,
   onNext,
   onPrev,
@@ -51,6 +68,47 @@ export function QuestionStep({
   const handleChange = (value: string) => {
     setLocalAnswer(value);
     onAnswer(value);
+  };
+
+  const githubSupport: SupportSourceInput = supportContext.github ?? {
+    enabled: false,
+    profile: '',
+    notes: '',
+  };
+  const linkedinSupport: SupportSourceInput = supportContext.linkedin ?? {
+    enabled: false,
+    profile: '',
+    notes: '',
+  };
+
+  const updateGithubSupport = (patch: Partial<SupportSourceInput>) => {
+    onSupportContextChange({
+      ...supportContext,
+      github: {
+        enabled: githubSupport.enabled ?? false,
+        profile: githubSupport.profile ?? '',
+        notes: githubSupport.notes ?? '',
+        ...patch,
+      },
+    });
+  };
+
+  const updateLinkedinSupport = (patch: Partial<SupportSourceInput>) => {
+    onSupportContextChange({
+      ...supportContext,
+      linkedin: {
+        enabled: linkedinSupport.enabled ?? false,
+        profile: linkedinSupport.profile ?? '',
+        notes: linkedinSupport.notes ?? '',
+        ...patch,
+      },
+    });
+  };
+
+  const handleTextareaKeyDown = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter') {
+      e.stopPropagation();
+    }
   };
 
   const handleContinue = useCallback(() => {
@@ -100,6 +158,94 @@ export function QuestionStep({
         </div>
       </div>
 
+      {/* Optional support sources */}
+      <div className="mb-6 border-2 border-black bg-white p-4 shadow-[4px_4px_0px_0px_#000000]">
+        <div className="mb-4">
+          <h3 className="font-mono text-sm font-bold uppercase tracking-wider">
+            Support Resume With Additional Data
+          </h3>
+          <p className="text-xs text-gray-600 mt-1 font-mono">
+            Optionally include GitHub and LinkedIn context before generating resume updates.
+          </p>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="space-y-3">
+            <ToggleSwitch
+              checked={githubSupport.enabled}
+              onCheckedChange={(checked) => updateGithubSupport({ enabled: checked })}
+              label="Use GitHub Data"
+              description="Fetch public profile and repository signals."
+            />
+
+            {githubSupport.enabled && (
+              <div className="space-y-3 border border-black bg-[#F8F8F4] p-3">
+                <div>
+                  <label className="mb-1 block font-mono text-xs uppercase tracking-wider text-black">
+                    GitHub URL or Username
+                  </label>
+                  <Input
+                    value={githubSupport.profile || ''}
+                    onChange={(e) => updateGithubSupport({ profile: e.target.value })}
+                    placeholder="github.com/username or username"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block font-mono text-xs uppercase tracking-wider text-black">
+                    GitHub Notes
+                  </label>
+                  <Textarea
+                    value={githubSupport.notes || ''}
+                    onChange={(e) => updateGithubSupport({ notes: e.target.value })}
+                    onKeyDown={handleTextareaKeyDown}
+                    placeholder="Paste achievements or project context from GitHub (optional)"
+                    className="min-h-[100px] font-mono"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-3">
+            <ToggleSwitch
+              checked={linkedinSupport.enabled}
+              onCheckedChange={(checked) => updateLinkedinSupport({ enabled: checked })}
+              label="Use LinkedIn Data"
+              description="Use profile URL and additional details you provide."
+            />
+
+            {linkedinSupport.enabled && (
+              <div className="space-y-3 border border-black bg-[#F8F8F4] p-3">
+                <div>
+                  <label className="mb-1 block font-mono text-xs uppercase tracking-wider text-black">
+                    LinkedIn Profile URL
+                  </label>
+                  <Input
+                    value={linkedinSupport.profile || ''}
+                    onChange={(e) => updateLinkedinSupport({ profile: e.target.value })}
+                    placeholder="linkedin.com/in/username"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block font-mono text-xs uppercase tracking-wider text-black">
+                    LinkedIn Notes
+                  </label>
+                  <Textarea
+                    value={linkedinSupport.notes || ''}
+                    onChange={(e) => updateLinkedinSupport({ notes: e.target.value })}
+                    onKeyDown={handleTextareaKeyDown}
+                    placeholder="Paste role highlights, promotions, or measurable outcomes from LinkedIn"
+                    className="min-h-[100px] font-mono"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Item context badge */}
       {item && (
         <div className="mb-6">
@@ -129,6 +275,7 @@ export function QuestionStep({
           ref={textareaRef}
           value={localAnswer}
           onChange={(e) => handleChange(e.target.value)}
+          onKeyDown={handleTextareaKeyDown}
           placeholder={question.placeholder}
           className="min-h-[180px] text-base resize-none font-mono"
         />

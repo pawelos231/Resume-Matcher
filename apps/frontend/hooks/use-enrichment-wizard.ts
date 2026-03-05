@@ -12,6 +12,7 @@ import {
   type EnrichmentQuestion,
   type EnhancedDescription,
   type AnswerInput,
+  type EnrichmentSupportContextInput,
 } from '@/lib/api/enrichment';
 
 // Wizard steps
@@ -217,31 +218,34 @@ export function useEnrichmentWizard(resumeId: string) {
   }, []);
 
   // Generate enhancements from answers
-  const generateEnhancementsFromAnswers = useCallback(async () => {
-    dispatch({ type: 'START_GENERATION' });
+  const generateEnhancementsFromAnswers = useCallback(
+    async (supportContext?: EnrichmentSupportContextInput) => {
+      dispatch({ type: 'START_GENERATION' });
 
-    try {
-      // Convert answers to API format
-      const answersArray: AnswerInput[] = Object.entries(state.answers)
-        .filter(([, answer]) => answer.trim() !== '')
-        .map(([questionId, answer]) => ({
-          question_id: questionId,
-          answer,
-        }));
+      try {
+        // Convert answers to API format
+        const answersArray: AnswerInput[] = Object.entries(state.answers)
+          .filter(([, answer]) => answer.trim() !== '')
+          .map(([questionId, answer]) => ({
+            question_id: questionId,
+            answer,
+          }));
 
-      const result = await generateEnhancements(resumeId, answersArray);
+        const result = await generateEnhancements(resumeId, answersArray, supportContext);
 
-      dispatch({
-        type: 'GENERATION_COMPLETE',
-        preview: result.enhancements,
-      });
-    } catch (error) {
-      dispatch({
-        type: 'SET_ERROR',
-        error: error instanceof Error ? error.message : 'Failed to generate enhancements',
-      });
-    }
-  }, [resumeId, state.answers]);
+        dispatch({
+          type: 'GENERATION_COMPLETE',
+          preview: result.enhancements,
+        });
+      } catch (error) {
+        dispatch({
+          type: 'SET_ERROR',
+          error: error instanceof Error ? error.message : 'Failed to generate enhancements',
+        });
+      }
+    },
+    [resumeId, state.answers]
+  );
 
   // Apply enhancements to resume
   const applyChanges = useCallback(async () => {
