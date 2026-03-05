@@ -395,6 +395,8 @@ class ResumeSummary(BaseModel):
     created_at: str
     updated_at: str
     title: str | None = None
+    cover_letter_preview: str | None = None
+    outreach_message_preview: str | None = None
 
 
 class ResumeListResponse(BaseModel):

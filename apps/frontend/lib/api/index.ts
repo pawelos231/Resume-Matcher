@@ -51,3 +51,23 @@ export {
   type PromptConfig,
   type PromptConfigUpdate,
 } from './config';
+
+// Search operations
+export {
+  buildSearchScrapeUrl,
+  fetchSearchScrape,
+  generateJobDescriptionFromSearchOffer,
+  type OfferSource,
+  type KeywordMode,
+  type OfferSortBy,
+  type OfferSortDirection,
+  type SearchOffer,
+  type SearchScraperError,
+  type SearchScrapeMeta,
+  type SearchScrapeResponse,
+  type SearchProgressEvent,
+  type SearchDoneEvent,
+  type SearchScrapeParams,
+  type SearchGenerateJobDescriptionRequest,
+  type SearchGenerateJobDescriptionResponse,
+} from './search';

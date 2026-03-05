@@ -104,6 +104,8 @@ export interface ResumeListItem {
   created_at: string;
   updated_at: string;
   title?: string | null;
+  cover_letter_preview?: string | null;
+  outreach_message_preview?: string | null;
   // Optional lightweight snippet of associated job description (populated client-side)
   jobSnippet?: string;
 }

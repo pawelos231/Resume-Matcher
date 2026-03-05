@@ -134,6 +134,16 @@ def _normalize_personal_info_value(value: Any) -> str:
     )
 
 
+def _build_preview_text(value: str | None, *, max_length: int = 180) -> str | None:
+    """Return a single-line preview of generated content."""
+    if not value:
+        return None
+    normalized = " ".join(value.split())
+    if len(normalized) <= max_length:
+        return normalized
+    return f"{normalized[: max_length - 3].rstrip()}..."
+
+
 def _raise_improve_error(
     action: str,
     stage: str,
@@ -448,6 +458,10 @@ async def list_resumes(include_master: bool = Query(False)) -> ResumeListRespons
             created_at=resume.get("created_at", ""),
             updated_at=resume.get("updated_at", ""),
             title=resume.get("title"),
+            cover_letter_preview=_build_preview_text(resume.get("cover_letter")),
+            outreach_message_preview=_build_preview_text(
+                resume.get("outreach_message")
+            ),
         )
         for resume in resumes
     ]

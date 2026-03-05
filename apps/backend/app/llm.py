@@ -14,6 +14,7 @@ from app.config import settings
 LLM_TIMEOUT_HEALTH_CHECK = 30
 LLM_TIMEOUT_COMPLETION = 120
 LLM_TIMEOUT_JSON = 180  # JSON completions may take longer
+OPENAI_MIN_MAX_TOKENS = 16_384
 
 # LLM-004: OpenRouter JSON-capable models (explicit allowlist)
 OPENROUTER_JSON_CAPABLE_MODELS = {
@@ -302,6 +303,40 @@ def _get_reasoning_effort(provider: str, model: str) -> str | None:
     return None
 
 
+def _get_effective_max_tokens(provider: str, max_tokens: int) -> int:
+    """Return effective max token budget with provider-specific overrides.
+
+    For OpenAI, use a higher floor to reduce truncated outputs on long JSON tasks.
+    """
+    normalized = max(int(max_tokens), 1)
+    if provider == "openai" and normalized < OPENAI_MIN_MAX_TOKENS:
+        return OPENAI_MIN_MAX_TOKENS
+    return normalized
+
+
+def _is_openai_output_limit_error(error: Exception) -> bool:
+    """Return True when OpenAI reports output token/model output cap exhaustion."""
+    message = str(error).lower()
+    if "max_tokens" in message and "reached" in message:
+        return True
+    if "model output limit" in message:
+        return True
+    return False
+
+
+def _with_compact_json_constraint(prompt: str) -> str:
+    """Append compactness constraints to reduce output size for long JSON tasks."""
+    return (
+        f"{prompt}\n\n"
+        "IMPORTANT OUTPUT SIZE CONSTRAINTS:\n"
+        "- Keep text concise and factual.\n"
+        "- Limit list lengths to essential items only.\n"
+        "- Prefer shorter bullet strings.\n"
+        "- Avoid repeating information across sections.\n"
+        "- Return valid JSON only."
+    )
+
+
 async def check_llm_health(
     config: LLMConfig | None = None,
     *,
@@ -331,7 +366,7 @@ async def check_llm_health(
         kwargs: dict[str, Any] = {
             "model": model_name,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 16,
+            "max_tokens": 16384,
             "api_key": config.api_key,
             "api_base": _normalize_api_base(config.provider, config.api_base),
             "timeout": LLM_TIMEOUT_HEALTH_CHECK,
@@ -412,6 +447,7 @@ async def complete(
         config = get_llm_config()
 
     model_name = get_model_name(config)
+    effective_max_tokens = _get_effective_max_tokens(config.provider, max_tokens)
 
     messages = []
     if system_prompt:
@@ -423,7 +459,7 @@ async def complete(
         kwargs: dict[str, Any] = {
             "model": model_name,
             "messages": messages,
-            "max_tokens": max_tokens,
+            "max_tokens": effective_max_tokens,
             "api_key": config.api_key,
             "api_base": _normalize_api_base(config.provider, config.api_base),
             "timeout": LLM_TIMEOUT_COMPLETION,
@@ -625,6 +661,7 @@ async def complete_json(
         config = get_llm_config()
 
     model_name = get_model_name(config)
+    effective_max_tokens = _get_effective_max_tokens(config.provider, max_tokens)
 
     # Build messages
     json_system = (
@@ -639,6 +676,7 @@ async def complete_json(
     use_json_mode = _supports_json_mode(config.provider, config.model)
 
     last_error = None
+    compact_retry_used = False
     for attempt in range(retries + 1):
         try:
             # Build request kwargs
@@ -646,10 +684,12 @@ async def complete_json(
             kwargs: dict[str, Any] = {
                 "model": model_name,
                 "messages": messages,
-                "max_tokens": max_tokens,
+                "max_tokens": effective_max_tokens,
                 "api_key": config.api_key,
                 "api_base": _normalize_api_base(config.provider, config.api_base),
-                "timeout": _calculate_timeout("json", max_tokens, config.provider),
+                "timeout": _calculate_timeout(
+                    "json", effective_max_tokens, config.provider
+                ),
             }
             if _supports_temperature(config.provider, model_name):
                 # LLM-002: Increase temperature on retry for variation
@@ -697,8 +737,24 @@ async def complete_json(
         except Exception as e:
             last_error = e
             logging.warning(f"LLM call failed (attempt {attempt + 1}): {e}")
+            if (
+                config.provider == "openai"
+                and _is_openai_output_limit_error(e)
+                and not compact_retry_used
+            ):
+                compact_retry_used = True
+                messages[-1]["content"] = _with_compact_json_constraint(prompt)
+                logging.warning(
+                    "Retrying OpenAI JSON completion with compact output constraints."
+                )
+                continue
             if attempt < retries:
                 continue
+            if config.provider == "openai" and _is_openai_output_limit_error(e):
+                raise ValueError(
+                    "OpenAI model output limit reached. Use a model with higher output "
+                    "capacity or reduce resume/job-description verbosity."
+                ) from e
             raise
 
     raise ValueError(f"Failed after {retries + 1} attempts: {last_error}")

@@ -297,7 +297,10 @@ Requirements:
 - Closing: Simple availability to discuss, no desperate enthusiasm
 - If resume shows career transition, frame the pivot as intentional and relevant
 - Extract company name from job description - do not use placeholders
-- Do NOT invent information not in the resume
+- ABSOLUTE HONESTY: Do NOT lie or fabricate facts
+- Do NOT claim any skill, achievement, metric, tool, responsibility, date, or experience that is not supported by the resume
+- If evidence is missing in the resume, OMIT that claim instead of guessing
+- You may lightly polish wording/tone ("podkoloryzowac"), but factual content must remain true to the resume
 - Tone: Confident peer, not eager applicant
 - Do NOT use em dash ("—") anywhere in the writing/output, even if it exists, remove it
 

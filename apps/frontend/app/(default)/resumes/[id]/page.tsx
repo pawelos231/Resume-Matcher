@@ -43,6 +43,8 @@ export default function ResumeViewerPage() {
   const [resumeTitle, setResumeTitle] = useState<string | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [editingTitleValue, setEditingTitleValue] = useState('');
+  const [coverLetter, setCoverLetter] = useState('');
+  const [outreachMessage, setOutreachMessage] = useState('');
 
   const resumeId = params?.id as string;
 
@@ -66,6 +68,8 @@ export default function ResumeViewerPage() {
 
         // Capture title for editable display (always set to clear stale state)
         setResumeTitle(data.title ?? null);
+        setCoverLetter(data.cover_letter ?? '');
+        setOutreachMessage(data.outreach_message ?? '');
 
         // Prioritize processed_resume if available (structured JSON)
         if (data.processed_resume) {
@@ -148,6 +152,8 @@ export default function ResumeViewerPage() {
   const reloadResumeData = async () => {
     try {
       const data = await fetchResume(resumeId);
+      setCoverLetter(data.cover_letter ?? '');
+      setOutreachMessage(data.outreach_message ?? '');
       if (data.processed_resume) {
         setResumeData(data.processed_resume as ResumeData);
         setError(null);
@@ -208,6 +214,9 @@ export default function ResumeViewerPage() {
   const handleDownloadSuccessConfirm = () => {
     setShowDownloadSuccessDialog(false);
   };
+
+  const hasCoverLetter = coverLetter.trim().length > 0;
+  const hasOutreachMessage = outreachMessage.trim().length > 0;
 
   if (loading) {
     return (
@@ -293,6 +302,22 @@ export default function ResumeViewerPage() {
               <Button onClick={() => setShowEnrichmentModal(true)} className="gap-2">
                 <Sparkles className="w-4 h-4" />
                 {t('resumeViewer.enhanceResume')}
+              </Button>
+            )}
+            {!isMasterResume && hasCoverLetter && (
+              <Button
+                variant="outline"
+                onClick={() => router.push(`/cover-letters/${resumeId}`)}
+              >
+                {t('builder.previewTabs.coverLetter')}
+              </Button>
+            )}
+            {!isMasterResume && hasOutreachMessage && (
+              <Button
+                variant="outline"
+                onClick={() => router.push(`/cold-mails/${resumeId}`)}
+              >
+                {t('builder.previewTabs.outreach')}
               </Button>
             )}
             <Button variant="outline" onClick={handleEdit}>

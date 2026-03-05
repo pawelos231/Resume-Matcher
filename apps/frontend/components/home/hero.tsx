@@ -46,6 +46,9 @@ export default function Hero() {
           <Link href="/dashboard" className={buttonClass}>
             {t('home.launchApp')}
           </Link>
+          <Link href="/search" className={buttonClass}>
+            Search
+          </Link>
         </div>
       </div>
     </section>

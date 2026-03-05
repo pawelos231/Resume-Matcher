@@ -49,6 +49,16 @@ from app.schemas.models import (
     UpdateOutreachMessageRequest,
     UpdateTitleRequest,
 )
+from app.schemas.search import (
+    SearchOffer,
+    SearchScraperError,
+    SearchScrapeMeta,
+    SearchScrapeResponse,
+    SearchProgressEvent,
+    SearchDoneEvent,
+    SearchGenerateJobDescriptionRequest,
+    SearchGenerateJobDescriptionResponse,
+)
 
 __all__ = [
     "PersonalInfo",
@@ -98,4 +108,12 @@ __all__ = [
     "GenerateContentResponse",
     "HealthResponse",
     "StatusResponse",
+    "SearchOffer",
+    "SearchScraperError",
+    "SearchScrapeMeta",
+    "SearchScrapeResponse",
+    "SearchProgressEvent",
+    "SearchDoneEvent",
+    "SearchGenerateJobDescriptionRequest",
+    "SearchGenerateJobDescriptionResponse",
 ]

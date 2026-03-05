@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -12,14 +12,34 @@ import {
   uploadJobDescriptions,
   previewImproveResume,
   confirmImproveResume,
+  fetchResume,
 } from '@/lib/api/resume';
-import { fetchPromptConfig, type PromptOption } from '@/lib/api/config';
+import { fetchFeatureConfig, fetchPromptConfig, type PromptOption } from '@/lib/api/config';
 import { Dropdown } from '@/components/ui/dropdown';
 import { useStatusCache } from '@/lib/context/status-cache';
-import { Loader2, ArrowLeft, AlertTriangle, Settings } from 'lucide-react';
+import { Loader2, ArrowLeft, AlertTriangle, Settings, ExternalLink } from 'lucide-react';
 import { useTranslations } from '@/lib/i18n';
 import { DiffPreviewModal } from '@/components/tailor/diff-preview-modal';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
+import {
+  clearPendingOfferMarker,
+  markOfferResumeGenerated,
+  readPendingOfferMarker,
+  type OfferResumeMarker,
+} from '@/lib/search-offer-resume-map';
+
+type TailorSection = 'resume' | 'cover-letter' | 'outreach';
+
+function parseTailorSection(value: string | null): TailorSection {
+  if (value === 'cover-letter' || value === 'outreach') {
+    return value;
+  }
+  return 'resume';
+}
+
+function buildTailorSectionUrl(resumeId: string, section: TailorSection): string {
+  return `/tailor?resumeId=${encodeURIComponent(resumeId)}&section=${section}`;
+}
 
 export default function TailorPage() {
   const { t } = useTranslations();
@@ -41,8 +61,22 @@ export default function TailorPage() {
   const [showMissingDiffDialog, setShowMissingDiffDialog] = useState(false);
   const [missingDiffResult, setMissingDiffResult] = useState<ImprovedResult | null>(null);
   const [missingDiffError, setMissingDiffError] = useState<string | null>(null);
+  const hasAppliedSearchPrefill = useRef(false);
+  const prefillOfferMarker = useRef<OfferResumeMarker | null>(null);
+  const [coverLetterEnabled, setCoverLetterEnabled] = useState(false);
+  const [outreachEnabled, setOutreachEnabled] = useState(false);
+  const [generatedResumeId, setGeneratedResumeId] = useState<string | null>(null);
+  const [generatedResumeTitle, setGeneratedResumeTitle] = useState<string | null>(null);
+  const [generatedCoverLetter, setGeneratedCoverLetter] = useState('');
+  const [generatedOutreachMessage, setGeneratedOutreachMessage] = useState('');
+  const [activeSection, setActiveSection] = useState<TailorSection>('resume');
+  const [isLoadingGeneratedResume, setIsLoadingGeneratedResume] = useState(false);
 
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const prefillParam = searchParams.get('prefill');
+  const resumeIdParam = searchParams.get('resumeId');
+  const sectionParam = searchParams.get('section');
   const { setImprovedData } = useResumePreview();
   const {
     status: systemStatus,
@@ -55,14 +89,83 @@ export default function TailorPage() {
   // Check if LLM is configured
   const isLlmConfigured = !statusLoading && systemStatus?.llm_configured;
 
+  const loadGeneratedResume = async (
+    resumeId: string,
+    preferredSection: TailorSection = 'resume'
+  ) => {
+    setIsLoadingGeneratedResume(true);
+    try {
+      const data = await fetchResume(resumeId);
+      setGeneratedResumeId(resumeId);
+      setGeneratedResumeTitle(data.title ?? null);
+      setGeneratedCoverLetter(data.cover_letter ?? '');
+      setGeneratedOutreachMessage(data.outreach_message ?? '');
+      setActiveSection(preferredSection);
+    } catch (err) {
+      console.error('Failed to load generated resume details:', err);
+      setError(t('resumeViewer.errors.failedToLoad'));
+    } finally {
+      setIsLoadingGeneratedResume(false);
+    }
+  };
+
   useEffect(() => {
     const storedId = localStorage.getItem('master_resume_id');
-    if (!storedId) {
+    if (!storedId && !resumeIdParam) {
       router.push('/dashboard');
-    } else {
+    } else if (storedId) {
       setMasterResumeId(storedId);
     }
-  }, [router]);
+  }, [router, resumeIdParam]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadFeatureConfig = async () => {
+      try {
+        const config = await fetchFeatureConfig();
+        if (!cancelled) {
+          setCoverLetterEnabled(config.enable_cover_letter);
+          setOutreachEnabled(config.enable_outreach_message);
+        }
+      } catch (err) {
+        console.error('Failed to load feature config', err);
+      }
+    };
+
+    loadFeatureConfig();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (hasAppliedSearchPrefill.current) {
+      return;
+    }
+    if (prefillParam !== 'search') {
+      return;
+    }
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const storedPrefill = window.sessionStorage.getItem('tailor_prefill_job_description');
+    prefillOfferMarker.current = readPendingOfferMarker();
+    if (storedPrefill) {
+      setJobDescription((previous) => (previous.trim() ? previous : storedPrefill));
+      window.sessionStorage.removeItem('tailor_prefill_job_description');
+    }
+    hasAppliedSearchPrefill.current = true;
+  }, [prefillParam]);
+
+  useEffect(() => {
+    if (!resumeIdParam) {
+      return;
+    }
+    const requestedSection = parseTailorSection(sectionParam);
+    loadGeneratedResume(resumeIdParam, requestedSection);
+  }, [resumeIdParam, sectionParam]);
 
   useEffect(() => {
     let cancelled = false;
@@ -131,8 +234,14 @@ export default function TailorPage() {
     setImprovedData(confirmed);
 
     const newResumeId = confirmed?.data?.resume_id;
+    if (newResumeId && prefillOfferMarker.current) {
+      markOfferResumeGenerated(prefillOfferMarker.current, newResumeId);
+      clearPendingOfferMarker();
+      prefillOfferMarker.current = null;
+    }
     if (newResumeId) {
-      router.push(`/resumes/${newResumeId}`);
+      await loadGeneratedResume(newResumeId, 'resume');
+      router.replace(buildTailorSectionUrl(newResumeId, 'resume'));
     } else {
       router.push('/builder');
     }
@@ -295,6 +404,23 @@ export default function TailorPage() {
     }
   };
 
+  const hasGeneratedCoverLetter = coverLetterEnabled && generatedCoverLetter.trim().length > 0;
+  const hasGeneratedOutreach = outreachEnabled && generatedOutreachMessage.trim().length > 0;
+  const availableSections: TailorSection[] = [
+    'resume',
+    ...(hasGeneratedCoverLetter ? ['cover-letter' as const] : []),
+    ...(hasGeneratedOutreach ? ['outreach' as const] : []),
+  ];
+  const effectiveSection = availableSections.includes(activeSection) ? activeSection : 'resume';
+
+  const handleSectionChange = (section: TailorSection) => {
+    if (!generatedResumeId) {
+      return;
+    }
+    setActiveSection(section);
+    router.replace(buildTailorSectionUrl(generatedResumeId, section));
+  };
+
   return (
     <div
       className="min-h-screen w-full bg-[#F6F5EE] flex flex-col items-center justify-center p-4 md:p-8 font-sans"
@@ -426,6 +552,84 @@ export default function TailorPage() {
               t('tailor.generateTailored')
             )}
           </Button>
+
+          {generatedResumeId && (
+            <div className="border-2 border-black bg-[#F0F0E8] p-4 md:p-6 space-y-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="font-mono text-xs font-bold uppercase text-blue-700">
+                    {'// '}
+                    {t('dashboard.tailoredResume')}
+                  </p>
+                  <h2 className="font-serif text-2xl font-bold leading-tight">
+                    {generatedResumeTitle || generatedResumeId}
+                  </h2>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => router.push(`/resumes/${generatedResumeId}`)}
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  {t('dashboard.viewResume')}
+                </Button>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  size="sm"
+                  variant={effectiveSection === 'resume' ? 'default' : 'outline'}
+                  onClick={() => handleSectionChange('resume')}
+                >
+                  {t('builder.previewTabs.resume')}
+                </Button>
+                {hasGeneratedCoverLetter && (
+                  <Button
+                    size="sm"
+                    variant={effectiveSection === 'cover-letter' ? 'default' : 'outline'}
+                    onClick={() => handleSectionChange('cover-letter')}
+                  >
+                    {t('builder.previewTabs.coverLetter')}
+                  </Button>
+                )}
+                {hasGeneratedOutreach && (
+                  <Button
+                    size="sm"
+                    variant={effectiveSection === 'outreach' ? 'default' : 'outline'}
+                    onClick={() => handleSectionChange('outreach')}
+                  >
+                    {t('builder.previewTabs.outreach')}
+                  </Button>
+                )}
+              </div>
+
+              {isLoadingGeneratedResume ? (
+                <div className="border border-black bg-white p-6 flex items-center gap-2 font-mono text-xs uppercase text-blue-700">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {t('common.loading')}
+                </div>
+              ) : (
+                <div className="border border-black bg-white p-4 md:p-5">
+                  {effectiveSection === 'resume' && (
+                    <p className="font-mono text-sm text-black leading-relaxed">
+                      {t('tailor.generateTailored')}. {t('resumeViewer.useTailorFeature')} -{' '}
+                      {t('dashboard.viewResume')}.
+                    </p>
+                  )}
+                  {effectiveSection === 'cover-letter' && (
+                    <div className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-black">
+                      {generatedCoverLetter}
+                    </div>
+                  )}
+                  {effectiveSection === 'outreach' && (
+                    <div className="whitespace-pre-wrap font-mono text-sm leading-relaxed text-black">
+                      {generatedOutreachMessage}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

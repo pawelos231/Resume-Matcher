@@ -17,6 +17,8 @@ import RefreshCw from 'lucide-react/dist/esm/icons/refresh-cw';
 import Plus from 'lucide-react/dist/esm/icons/plus';
 import Settings from 'lucide-react/dist/esm/icons/settings';
 import AlertTriangle from 'lucide-react/dist/esm/icons/alert-triangle';
+import SearchIcon from 'lucide-react/dist/esm/icons/search';
+import Trash2 from 'lucide-react/dist/esm/icons/trash-2';
 
 import {
   fetchResume,
@@ -35,9 +37,13 @@ export default function DashboardPage() {
   const [masterResumeId, setMasterResumeId] = useState<string | null>(null);
   const [processingStatus, setProcessingStatus] = useState<ProcessingStatus>('loading');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
   const [tailoredResumes, setTailoredResumes] = useState<ResumeListItem[]>([]);
   const [isRetrying, setIsRetrying] = useState(false);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
+  const [tailoredResumeToDelete, setTailoredResumeToDelete] = useState<ResumeListItem | null>(null);
+  const [isDeletingTailoredResume, setIsDeletingTailoredResume] = useState(false);
+  const [isDeletingAllResumes, setIsDeletingAllResumes] = useState(false);
   const router = useRouter();
 
   // Status cache for optimistic counter updates and LLM status check
@@ -230,6 +236,57 @@ export default function DashboardPage() {
     }
   };
 
+  const confirmDeleteAllResumes = async () => {
+    setIsDeletingAllResumes(true);
+    try {
+      const allResumes = await fetchResumeList(true);
+      for (const resume of allResumes) {
+        try {
+          await deleteResume(resume.resume_id);
+          decrementResumes();
+        } catch (err) {
+          console.error(`Failed to delete resume ${resume.resume_id}:`, err);
+        }
+      }
+
+      localStorage.removeItem('master_resume_id');
+      setMasterResumeId(null);
+      setHasMasterResume(false);
+      setProcessingStatus('loading');
+      setTailoredResumes([]);
+      jobSnippetCacheRef.current = {};
+      setShowDeleteAllDialog(false);
+      await loadTailoredResumes();
+    } catch (err) {
+      console.error('Failed to delete all resumes:', err);
+    } finally {
+      setIsDeletingAllResumes(false);
+    }
+  };
+
+  const handleTailoredResumeDeleteClick = (e: React.MouseEvent, resume: ResumeListItem) => {
+    e.stopPropagation();
+    setTailoredResumeToDelete(resume);
+  };
+
+  const confirmDeleteTailoredResume = async () => {
+    if (!tailoredResumeToDelete) return;
+    setIsDeletingTailoredResume(true);
+    try {
+      await deleteResume(tailoredResumeToDelete.resume_id);
+      decrementResumes();
+      setTailoredResumes((prev) =>
+        prev.filter((resume) => resume.resume_id !== tailoredResumeToDelete.resume_id)
+      );
+      delete jobSnippetCacheRef.current[tailoredResumeToDelete.resume_id];
+      setTailoredResumeToDelete(null);
+    } catch (err) {
+      console.error('Failed to delete tailored resume:', err);
+    } finally {
+      setIsDeletingTailoredResume(false);
+    }
+  };
+
   const getStatusDisplay = () => {
     switch (processingStatus) {
       case 'loading':
@@ -286,7 +343,8 @@ export default function DashboardPage() {
     return Math.abs(hash);
   };
 
-  const totalCards = 1 + tailoredResumes.length + 1;
+  const hasAnyResumes = Boolean(masterResumeId) || tailoredResumes.length > 0;
+  const totalCards = 1 + tailoredResumes.length + 2 + (hasAnyResumes ? 1 : 0);
   const fillerCount = Math.max(0, (5 - (totalCards % 5)) % 5);
   const extraFillerCount = 5;
   // Use Tailwind classes for fillers now that we have them in config or use specific hex if needed
@@ -455,6 +513,8 @@ export default function DashboardPage() {
           const title =
             resume.title || resume.jobSnippet || resume.filename || t('dashboard.tailoredResume');
           const color = cardPalette[hashTitle(title) % cardPalette.length];
+          const coverLetterPreview = resume.cover_letter_preview?.trim() || '';
+          const outreachPreview = resume.outreach_message_preview?.trim() || '';
           return (
             <Card
               key={resume.resume_id}
@@ -470,15 +530,50 @@ export default function DashboardPage() {
                   >
                     <span className="font-mono font-bold">{getMonogram(title)}</span>
                   </div>
-                  <span className="font-mono text-xs text-gray-500 uppercase">
-                    {resume.processing_status}
-                  </span>
+                  <div className="flex items-start gap-2">
+                    <span className="font-mono text-xs text-gray-500 uppercase">
+                      {resume.processing_status}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 rounded-none hover:bg-red-100 hover:text-red-700"
+                      onClick={(e) => handleTailoredResumeDeleteClick(e, resume)}
+                      title={t('dashboard.deleteResume')}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
                 <CardTitle className="text-lg">
                   <span className="block font-serif text-base font-bold leading-tight mb-1 w-full line-clamp-2">
                     {title}
                   </span>
                 </CardTitle>
+                {(coverLetterPreview || outreachPreview) && (
+                  <div className="space-y-2 mt-2">
+                    {coverLetterPreview && (
+                      <div className="border border-black bg-white/60 p-2">
+                        <p className="font-mono text-[10px] font-bold uppercase text-blue-700 mb-1">
+                          {t('builder.previewTabs.coverLetter')}
+                        </p>
+                        <p className="font-mono text-[11px] text-black leading-relaxed line-clamp-2">
+                          {coverLetterPreview}
+                        </p>
+                      </div>
+                    )}
+                    {outreachPreview && (
+                      <div className="border border-black bg-white/60 p-2">
+                        <p className="font-mono text-[10px] font-bold uppercase text-green-700 mb-1">
+                          {t('builder.previewTabs.outreach')}
+                        </p>
+                        <p className="font-mono text-[11px] text-black leading-relaxed line-clamp-2">
+                          {outreachPreview}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <CardDescription className="mt-auto pt-4 uppercase">
                   {t('dashboard.edited', {
                     date: formatDate(resume.updated_at || resume.created_at),
@@ -505,7 +600,42 @@ export default function DashboardPage() {
           </div>
         </Card>
 
-        {/* 4. Fillers */}
+        {/* 4. Search */}
+        <Card className="aspect-square h-full" variant="default">
+          <div className="flex-1 flex flex-col items-center justify-center text-center h-full">
+            <Button
+              onClick={() => router.push('/search')}
+              className="w-20 h-20 bg-black text-white border-2 border-black shadow-sw-default hover:bg-gray-900 hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-none transition-all rounded-none"
+            >
+              <SearchIcon className="w-8 h-8" />
+            </Button>
+            <p className="text-xs font-mono mt-4 uppercase text-blue-700">{t('common.search')}</p>
+          </div>
+        </Card>
+
+        {/* 5. Delete All Resumes */}
+        {hasAnyResumes && (
+          <Card className="aspect-square h-full" variant="default">
+            <div className="flex-1 flex flex-col items-center justify-center text-center h-full">
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setShowDeleteAllDialog(true)}
+                disabled={isDeletingAllResumes}
+                className="w-20 h-20 rounded-none border-2 border-black shadow-sw-default hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-none transition-all"
+              >
+                {isDeletingAllResumes ? (
+                  <Loader2 className="w-8 h-8 animate-spin" />
+                ) : (
+                  <Trash2 className="w-8 h-8" />
+                )}
+              </Button>
+              <p className="text-xs font-mono mt-4 uppercase text-red-700">Delete All Resumes</p>
+            </div>
+          </Card>
+        )}
+
+        {/* 6. Fillers */}
         {Array.from({ length: fillerCount }).map((_, index) => (
           <Card
             key={`filler-${index}`}
@@ -533,6 +663,34 @@ export default function DashboardPage() {
           cancelLabel={t('confirmations.keepResumeCancelLabel')}
           onConfirm={confirmDeleteAndReupload}
           variant="danger"
+        />
+
+        <ConfirmDialog
+          open={showDeleteAllDialog}
+          onOpenChange={setShowDeleteAllDialog}
+          title="Delete All Resumes"
+          description="This will permanently remove all resumes from the dashboard."
+          confirmLabel="Delete All"
+          cancelLabel={t('confirmations.keepResumeCancelLabel')}
+          onConfirm={confirmDeleteAllResumes}
+          variant="danger"
+          confirmDisabled={isDeletingAllResumes}
+        />
+
+        <ConfirmDialog
+          open={Boolean(tailoredResumeToDelete)}
+          onOpenChange={(open) => {
+            if (!open) {
+              setTailoredResumeToDelete(null);
+            }
+          }}
+          title={t('dashboard.deleteResume')}
+          description={t('confirmations.deleteResumeFromSystemDescription')}
+          confirmLabel={t('confirmations.deleteResumeConfirmLabel')}
+          cancelLabel={t('confirmations.keepResumeCancelLabel')}
+          onConfirm={confirmDeleteTailoredResume}
+          variant="danger"
+          confirmDisabled={isDeletingTailoredResume}
         />
       </SwissGrid>
     </div>
