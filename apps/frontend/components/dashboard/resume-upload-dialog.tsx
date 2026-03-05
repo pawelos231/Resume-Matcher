@@ -108,6 +108,7 @@ export function ResumeUploadDialog({
     uploadUrl: UPLOAD_URL,
     onUploadSuccess: (uploadedFile, response) => {
       const data = response as {
+        message?: string;
         resume_id?: string;
         processing_status?: 'pending' | 'processing' | 'ready' | 'failed';
         is_master?: boolean;
@@ -121,7 +122,7 @@ export function ResumeUploadDialog({
           // Keep dialog open on failure so users can retry processing.
           setUploadFeedback({
             type: 'error',
-            message: t('dashboard.uploadDialog.parsingFailedKeepOpen'),
+            message: data.message || t('dashboard.uploadDialog.parsingFailedKeepOpen'),
           });
           setFailedResumeId(data.resume_id);
           return;
@@ -169,7 +170,10 @@ export function ResumeUploadDialog({
     try {
       const result = await retryProcessing(resumeIdToRetry);
       if (result.processing_status !== 'ready') {
-        setUploadFeedback({ type: 'error', message: t('dashboard.retryFailed') });
+        setUploadFeedback({
+          type: 'error',
+          message: result.message || t('dashboard.retryFailed'),
+        });
         return;
       }
 

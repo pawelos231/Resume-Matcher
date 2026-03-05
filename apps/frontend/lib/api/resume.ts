@@ -365,6 +365,25 @@ export async function retryProcessing(resumeId: string): Promise<ResumeUploadRes
   return res.json();
 }
 
+/** Initializes an empty master resume for manual editing */
+export async function initializeMasterResumeManually(): Promise<ResumeUploadResponse> {
+  const res = await apiPost('/resumes/initialize-manual', {});
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    let detail = text;
+    try {
+      const parsed = JSON.parse(text) as { detail?: string };
+      if (typeof parsed.detail === 'string' && parsed.detail.trim()) {
+        detail = parsed.detail.trim();
+      }
+    } catch {
+      // no-op: keep raw text
+    }
+    throw new Error(detail || `Failed to initialize manual master resume (status ${res.status}).`);
+  }
+  return res.json();
+}
+
 /** Fetches the job description used to tailor a resume */
 export async function fetchJobDescription(
   resumeId: string

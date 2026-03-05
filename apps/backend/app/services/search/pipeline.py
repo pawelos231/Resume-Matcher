@@ -228,6 +228,10 @@ def _has_keyword_match(
     return matched_count > 0
 
 
+def _tokenize_title_words(title: str) -> set[str]:
+    return {token.casefold() for token in title.split() if token.strip()}
+
+
 def dedupe_offers(offers: list[ScrapedOffer]) -> list[ScrapedOffer]:
     deduped: dict[str, ScrapedOffer] = {}
     for offer in offers:
@@ -244,8 +248,9 @@ def to_public_offers(
 ) -> list[PublicOffer]:
     with_matches: list[PublicOffer] = []
     for offer in offers:
+        title_tokens = _tokenize_title_words(offer.title)
         matched_keywords = [
-            keyword for keyword in keywords if keyword in offer.searchable_text
+            keyword for keyword in keywords if keyword.casefold() in title_tokens
         ]
         if not _has_keyword_match(len(matched_keywords), len(keywords), keyword_mode):
             continue

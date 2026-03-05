@@ -652,10 +652,12 @@ async def complete_json(
     config: LLMConfig | None = None,
     max_tokens: int = 4096,
     retries: int = 2,
+    deterministic: bool = False,
 ) -> dict[str, Any]:
     """Make a completion request expecting JSON response.
 
     Uses JSON mode when available, with retry logic for reliability.
+    deterministic=True keeps temperature fixed at 0 across retries.
     """
     if config is None:
         config = get_llm_config()
@@ -692,8 +694,11 @@ async def complete_json(
                 ),
             }
             if _supports_temperature(config.provider, model_name):
-                # LLM-002: Increase temperature on retry for variation
-                kwargs["temperature"] = _get_retry_temperature(attempt)
+                if deterministic:
+                    kwargs["temperature"] = 0
+                else:
+                    # LLM-002: Increase temperature on retry for variation
+                    kwargs["temperature"] = _get_retry_temperature(attempt)
             reasoning_effort = _get_reasoning_effort(config.provider, model_name)
             if reasoning_effort:
                 kwargs["reasoning_effort"] = reasoning_effort
@@ -727,10 +732,11 @@ async def complete_json(
             logging.warning(f"JSON parse failed (attempt {attempt + 1}): {e}")
             if attempt < retries:
                 # Add hint to prompt for retry
-                messages[-1]["content"] = (
-                    prompt
-                    + "\n\nIMPORTANT: Output ONLY a valid JSON object. Start with { and end with }."
-                )
+                if not deterministic:
+                    messages[-1]["content"] = (
+                        prompt
+                        + "\n\nIMPORTANT: Output ONLY a valid JSON object. Start with { and end with }."
+                    )
                 continue
             raise ValueError(f"Failed to parse JSON after {retries + 1} attempts: {e}")
 

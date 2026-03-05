@@ -25,6 +25,7 @@ import {
   fetchResumeList,
   deleteResume,
   retryProcessing,
+  initializeMasterResumeManually,
   fetchJobDescription,
   type ResumeListItem,
 } from '@/lib/api/resume';
@@ -40,6 +41,8 @@ export default function DashboardPage() {
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
   const [tailoredResumes, setTailoredResumes] = useState<ResumeListItem[]>([]);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [isInitializingManualMaster, setIsInitializingManualMaster] = useState(false);
+  const [manualInitError, setManualInitError] = useState<string | null>(null);
   const [isUploadDialogOpen, setIsUploadDialogOpen] = useState(false);
   const [tailoredResumeToDelete, setTailoredResumeToDelete] = useState<ResumeListItem | null>(null);
   const [isDeletingTailoredResume, setIsDeletingTailoredResume] = useState(false);
@@ -191,6 +194,25 @@ export default function DashboardPage() {
     setHasMasterResume(true);
   };
 
+  const handleInitializeMasterResumeManually = async () => {
+    setManualInitError(null);
+    setIsInitializingManualMaster(true);
+    try {
+      const result = await initializeMasterResumeManually();
+      localStorage.setItem('master_resume_id', result.resume_id);
+      setMasterResumeId(result.resume_id);
+      setProcessingStatus(result.processing_status as ProcessingStatus);
+      setHasMasterResume(true);
+      incrementResumes();
+      router.push(`/builder?id=${encodeURIComponent(result.resume_id)}`);
+    } catch (err) {
+      console.error('Failed to initialize manual master resume:', err);
+      setManualInitError(err instanceof Error ? err.message : t('dashboard.manualInitFailed'));
+    } finally {
+      setIsInitializingManualMaster(false);
+    }
+  };
+
   const handleRetryProcessing = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (!masterResumeId) return;
@@ -239,8 +261,8 @@ export default function DashboardPage() {
   const confirmDeleteAllResumes = async () => {
     setIsDeletingAllResumes(true);
     try {
-      const allResumes = await fetchResumeList(true);
-      for (const resume of allResumes) {
+      const nonMasterResumes = await fetchResumeList(false);
+      for (const resume of nonMasterResumes) {
         try {
           await deleteResume(resume.resume_id);
           decrementResumes();
@@ -249,10 +271,6 @@ export default function DashboardPage() {
         }
       }
 
-      localStorage.removeItem('master_resume_id');
-      setMasterResumeId(null);
-      setHasMasterResume(false);
-      setProcessingStatus('loading');
       setTailoredResumes([]);
       jobSnippetCacheRef.current = {};
       setShowDeleteAllDialog(false);
@@ -343,8 +361,9 @@ export default function DashboardPage() {
     return Math.abs(hash);
   };
 
-  const hasAnyResumes = Boolean(masterResumeId) || tailoredResumes.length > 0;
-  const totalCards = 1 + tailoredResumes.length + 2 + (hasAnyResumes ? 1 : 0);
+  const hasTailoredResumes = tailoredResumes.length > 0;
+  const masterCardCount = masterResumeId ? 1 : 2;
+  const totalCards = masterCardCount + tailoredResumes.length + 2 + (hasTailoredResumes ? 1 : 0);
   const fillerCount = Math.max(0, (5 - (totalCards % 5)) % 5);
   const extraFillerCount = 5;
   // Use Tailwind classes for fillers now that we have them in config or use specific hex if needed
@@ -376,65 +395,104 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {manualInitError && !masterResumeId && (
+        <div className="border-2 border-red-600 bg-red-50 p-4 shadow-sw-default mb-6">
+          <p className="font-mono text-xs uppercase tracking-wider text-red-700">
+            {manualInitError}
+          </p>
+        </div>
+      )}
+
       <SwissGrid>
         {/* 1. Master Resume Logic */}
         {!masterResumeId ? (
-          // LLM Not Configured or Upload State
-          !isLlmConfigured && !statusLoading ? (
-            <Link href="/settings" className="block h-full">
-              <Card
-                variant="interactive"
-                className="aspect-square h-full border-dashed border-warning bg-amber-50"
-              >
-                <div className="flex-1 flex flex-col justify-between">
-                  <div className="w-14 h-14 border-2 border-warning bg-white flex items-center justify-center mb-4">
-                    <AlertTriangle className="w-7 h-7 text-warning" />
-                  </div>
-                  <div>
-                    <CardTitle className="text-lg uppercase text-amber-800 mb-2">
-                      {t('dashboard.setupRequiredTitle')}
-                    </CardTitle>
-                    <CardDescription className="text-amber-700 text-xs">
-                      {t('dashboard.setupRequiredMessage')}
-                    </CardDescription>
-                    <div className="flex items-center gap-2 mt-4 text-amber-700 group-hover:text-amber-900">
-                      <Settings className="w-4 h-4" />
-                      <span className="font-mono text-xs font-bold uppercase">
-                        {t('nav.goToSettings')}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </Card>
-            </Link>
-          ) : (
-            <ResumeUploadDialog
-              open={isUploadDialogOpen}
-              onOpenChange={setIsUploadDialogOpen}
-              onUploadComplete={handleUploadComplete}
-              trigger={
+          <>
+            {/* LLM Not Configured or Upload State */}
+            {!isLlmConfigured && !statusLoading ? (
+              <Link href="/settings" className="block h-full">
                 <Card
                   variant="interactive"
-                  className="aspect-square h-full hover:bg-primary hover:text-canvas"
+                  className="aspect-square h-full border-dashed border-warning bg-amber-50"
                 >
-                  <div className="flex-1 flex flex-col justify-between pointer-events-none">
-                    <div className="w-14 h-14 border-2 border-current flex items-center justify-center mb-4">
-                      <span className="text-2xl leading-none relative top-[-2px]">+</span>
+                  <div className="flex-1 flex flex-col justify-between">
+                    <div className="w-14 h-14 border-2 border-warning bg-white flex items-center justify-center mb-4">
+                      <AlertTriangle className="w-7 h-7 text-warning" />
                     </div>
                     <div>
-                      <CardTitle className="text-xl uppercase">
-                        {t('dashboard.initializeMasterResume')}
+                      <CardTitle className="text-lg uppercase text-amber-800 mb-2">
+                        {t('dashboard.setupRequiredTitle')}
                       </CardTitle>
-                      <CardDescription className="mt-2 opacity-60 group-hover:opacity-100 text-current">
-                        {'// '}
-                        {t('dashboard.initializeSequence')}
+                      <CardDescription className="text-amber-700 text-xs">
+                        {t('dashboard.setupRequiredMessage')}
                       </CardDescription>
+                      <div className="flex items-center gap-2 mt-4 text-amber-700 group-hover:text-amber-900">
+                        <Settings className="w-4 h-4" />
+                        <span className="font-mono text-xs font-bold uppercase">
+                          {t('nav.goToSettings')}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </Card>
-              }
-            />
-          )
+              </Link>
+            ) : (
+              <ResumeUploadDialog
+                open={isUploadDialogOpen}
+                onOpenChange={setIsUploadDialogOpen}
+                onUploadComplete={handleUploadComplete}
+                trigger={
+                  <Card
+                    variant="interactive"
+                    className="aspect-square h-full hover:bg-primary hover:text-canvas"
+                  >
+                    <div className="flex-1 flex flex-col justify-between pointer-events-none">
+                      <div className="w-14 h-14 border-2 border-current flex items-center justify-center mb-4">
+                        <span className="text-2xl leading-none relative top-[-2px]">+</span>
+                      </div>
+                      <div>
+                        <CardTitle className="text-xl uppercase">
+                          {t('dashboard.initializeMasterResume')}
+                        </CardTitle>
+                        <CardDescription className="mt-2 opacity-60 group-hover:opacity-100 text-current">
+                          {'// '}
+                          {t('dashboard.initializeSequence')}
+                        </CardDescription>
+                      </div>
+                    </div>
+                  </Card>
+                }
+              />
+            )}
+
+            <Card
+              variant="interactive"
+              className={`aspect-square h-full hover:bg-primary hover:text-canvas ${
+                isInitializingManualMaster ? 'pointer-events-none opacity-70' : ''
+              }`}
+              onClick={() => {
+                void handleInitializeMasterResumeManually();
+              }}
+            >
+              <div className="flex-1 flex flex-col justify-between">
+                <div className="w-14 h-14 border-2 border-current flex items-center justify-center mb-4">
+                  {isInitializingManualMaster ? (
+                    <Loader2 className="w-7 h-7 animate-spin" />
+                  ) : (
+                    <span className="text-xl font-mono font-bold">M</span>
+                  )}
+                </div>
+                <div>
+                  <CardTitle className="text-xl uppercase">
+                    {t('dashboard.initializeMasterResumeManually')}
+                  </CardTitle>
+                  <CardDescription className="mt-2 opacity-60 group-hover:opacity-100 text-current">
+                    {'// '}
+                    {t('dashboard.initializeManualSequence')}
+                  </CardDescription>
+                </div>
+              </div>
+            </Card>
+          </>
         ) : (
           // Master Resume Exists
           <Card
@@ -508,9 +566,12 @@ export default function DashboardPage() {
           </Card>
         )}
 
-        {/* 2. Delete All Resumes */}
-        {hasAnyResumes && (
-          <Card className="aspect-square h-full border-2 border-red-600 bg-red-50" variant="default">
+        {/* 2. Delete Tailored Resumes */}
+        {hasTailoredResumes && (
+          <Card
+            className="aspect-square h-full border-2 border-red-600 bg-red-50"
+            variant="default"
+          >
             <div className="flex-1 flex flex-col items-center justify-center text-center h-full">
               <Button
                 variant="destructive"
@@ -525,7 +586,9 @@ export default function DashboardPage() {
                   <Trash2 className="w-8 h-8" />
                 )}
               </Button>
-              <p className="text-xs font-mono mt-4 uppercase text-red-700">Delete All Resumes</p>
+              <p className="text-xs font-mono mt-4 uppercase text-red-700">
+                Delete Tailored Resumes
+              </p>
             </div>
           </Card>
         )}
@@ -668,8 +731,8 @@ export default function DashboardPage() {
         <ConfirmDialog
           open={showDeleteAllDialog}
           onOpenChange={setShowDeleteAllDialog}
-          title="Delete All Resumes"
-          description="This will permanently remove all resumes from the dashboard."
+          title="Delete Tailored Resumes"
+          description="This will permanently remove all tailored resumes. Your master resume will be kept."
           confirmLabel="Delete All"
           cancelLabel={t('confirmations.keepResumeCancelLabel')}
           onConfirm={confirmDeleteAllResumes}

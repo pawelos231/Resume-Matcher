@@ -8,7 +8,7 @@ from markitdown import MarkItDown
 
 from app.llm import complete_json
 from app.prompts import PARSE_RESUME_PROMPT
-from app.prompts.templates import RESUME_SCHEMA_EXAMPLE
+from app.prompts.templates import RESUME_EXTRACTION_SCHEMA_TEMPLATE
 from app.schemas import ResumeData
 
 
@@ -47,13 +47,22 @@ async def parse_resume_to_json(markdown_text: str) -> dict[str, Any]:
         Structured resume data matching ResumeData schema
     """
     prompt = PARSE_RESUME_PROMPT.format(
-        schema=RESUME_SCHEMA_EXAMPLE,
+        schema=RESUME_EXTRACTION_SCHEMA_TEMPLATE,
         resume_text=markdown_text,
     )
 
     result = await complete_json(
         prompt=prompt,
-        system_prompt="You are a JSON extraction engine. Output only valid JSON, no explanations.",
+        system_prompt=(
+            "You are a strict resume-to-JSON mapper. "
+            "Map only what is explicitly visible in input text. "
+            "Do not infer, embellish, normalize, or rewrite content. "
+            "If something is missing, keep it empty. "
+            "Return only one valid JSON object with schema-compatible keys."
+        ),
+        max_tokens=8192,
+        retries=1,
+        deterministic=True,
     )
 
     # Validate against schema

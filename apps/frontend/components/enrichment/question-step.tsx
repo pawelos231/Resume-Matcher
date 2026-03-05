@@ -11,7 +11,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { ToggleSwitch } from '@/components/ui/toggle-switch';
-import { ChevronLeft, ChevronRight, Briefcase, FolderKanban } from 'lucide-react';
+import ChevronLeft from 'lucide-react/dist/esm/icons/chevron-left';
+import ChevronRight from 'lucide-react/dist/esm/icons/chevron-right';
+import Briefcase from 'lucide-react/dist/esm/icons/briefcase';
+import FolderKanban from 'lucide-react/dist/esm/icons/folder-kanban';
 import type {
   EnrichmentQuestion,
   EnrichmentItem,
@@ -179,7 +182,7 @@ export function QuestionStep({
             />
 
             {githubSupport.enabled && (
-              <div className="space-y-3 border border-black bg-[#F8F8F4] p-3">
+              <div className="space-y-3 border border-black bg-[#F0F0E8] p-3">
                 <div>
                   <label className="mb-1 block font-mono text-xs uppercase tracking-wider text-black">
                     GitHub URL or Username
@@ -216,7 +219,7 @@ export function QuestionStep({
             />
 
             {linkedinSupport.enabled && (
-              <div className="space-y-3 border border-black bg-[#F8F8F4] p-3">
+              <div className="space-y-3 border border-black bg-[#F0F0E8] p-3">
                 <div>
                   <label className="mb-1 block font-mono text-xs uppercase tracking-wider text-black">
                     LinkedIn Profile URL

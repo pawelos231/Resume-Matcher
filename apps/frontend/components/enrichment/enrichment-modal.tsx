@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { XIcon, Sparkles } from 'lucide-react';
+import Sparkles from 'lucide-react/dist/esm/icons/sparkles';
+import XIcon from 'lucide-react/dist/esm/icons/x';
 import { useEnrichmentWizard } from '@/hooks/use-enrichment-wizard';
 import type { EnrichmentSupportContextInput } from '@/lib/api/enrichment';
 import { useTranslations } from '@/lib/i18n';

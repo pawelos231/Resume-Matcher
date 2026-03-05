@@ -144,6 +144,38 @@ def _build_preview_text(value: str | None, *, max_length: int = 180) -> str | No
     return f"{normalized[: max_length - 3].rstrip()}..."
 
 
+def _sanitize_error_preview(value: str, *, max_length: int = 220) -> str:
+    normalized = " ".join(value.split())
+    if not normalized:
+        return "Unknown parsing error"
+    if len(normalized) <= max_length:
+        return normalized
+    return f"{normalized[: max_length - 3].rstrip()}..."
+
+
+def _describe_resume_parse_error(error: Exception) -> str:
+    raw = _sanitize_error_preview(str(error) or error.__class__.__name__)
+    lowered = raw.casefold()
+
+    if "api key" in lowered:
+        return "Missing or invalid LLM API key in settings."
+    if "authentication" in lowered or "unauthorized" in lowered or "invalid api key" in lowered:
+        return "LLM authentication failed. Verify provider credentials."
+    if "output limit" in lowered:
+        return (
+            "Model output limit reached while parsing. "
+            "Try a shorter resume or a model with higher output capacity."
+        )
+    if "empty response from llm" in lowered:
+        return "LLM returned an empty response."
+    if "no json found in response" in lowered or "failed to parse json" in lowered:
+        return "LLM returned invalid JSON for resume parsing."
+    if "validation error" in lowered:
+        return "Parsed JSON does not match required resume schema."
+
+    return raw
+
+
 def _raise_improve_error(
     action: str,
     stage: str,
@@ -313,6 +345,39 @@ ALLOWED_TYPES = {
 MAX_FILE_SIZE = 4 * 1024 * 1024  # 4MB
 
 
+@router.post("/initialize-manual", response_model=ResumeUploadResponse)
+async def initialize_master_resume_manually() -> ResumeUploadResponse:
+    """Create an empty master resume for manual editing in Builder."""
+    initial_data = normalize_resume_data(ResumeData().model_dump())
+    serialized = json.dumps(initial_data, indent=2, ensure_ascii=False)
+
+    resume = await db.create_resume_atomic_master(
+        content=serialized,
+        content_type="json",
+        filename="manual_master_resume.json",
+        processed_data=initial_data,
+        processing_status="ready",
+    )
+
+    if not resume.get("is_master", False):
+        db.delete_resume(resume["resume_id"])
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Master resume already exists. Delete current master resume before "
+                "initializing a manual one."
+            ),
+        )
+
+    return ResumeUploadResponse(
+        message="Master resume initialized manually.",
+        request_id=str(uuid4()),
+        resume_id=resume["resume_id"],
+        processing_status="ready",
+        is_master=True,
+    )
+
+
 @router.post("/upload", response_model=ResumeUploadResponse)
 async def upload_resume(file: UploadFile = File(...)) -> ResumeUploadResponse:
     """Upload and process a resume file (PDF/DOCX).
@@ -365,22 +430,38 @@ async def upload_resume(file: UploadFile = File(...)) -> ResumeUploadResponse:
             {
                 "processed_data": processed_data,
                 "processing_status": "ready",
+                "processing_error": None,
             },
         )
         resume["processed_data"] = processed_data
         resume["processing_status"] = "ready"
+        resume["processing_error"] = None
     except Exception as e:
         # LLM parsing failed, update status to failed
+        parse_error_detail = _describe_resume_parse_error(e)
         logger.warning(f"Resume parsing to JSON failed for {file.filename}: {e}")
-        db.update_resume(resume["resume_id"], {"processing_status": "failed"})
+        db.update_resume(
+            resume["resume_id"],
+            {
+                "processing_status": "failed",
+                "processing_error": parse_error_detail,
+            },
+        )
         resume["processing_status"] = "failed"
+        resume["processing_error"] = parse_error_detail
 
     # Return accurate status to client (API-001 fix)
+    parse_error_detail = resume.get("processing_error")
+    filename = file.filename or "resume"
     return ResumeUploadResponse(
         message=(
-            f"File {file.filename} uploaded successfully"
+            f"File {filename} uploaded successfully"
             if resume["processing_status"] == "ready"
-            else f"File {file.filename} uploaded but parsing failed"
+            else (
+                f"File {filename} uploaded but parsing failed: {parse_error_detail}"
+                if parse_error_detail
+                else f"File {filename} uploaded but parsing failed"
+            )
         ),
         request_id=str(uuid4()),
         resume_id=resume["resume_id"],
@@ -1155,6 +1236,7 @@ async def retry_processing(resume_id: str) -> ResumeUploadResponse:
             {
                 "processed_data": processed_data,
                 "processing_status": "ready",
+                "processing_error": None,
             },
         )
         return ResumeUploadResponse(
@@ -1165,10 +1247,17 @@ async def retry_processing(resume_id: str) -> ResumeUploadResponse:
             is_master=resume.get("is_master", False),
         )
     except Exception as e:
+        parse_error_detail = _describe_resume_parse_error(e)
         logger.warning(f"Retry processing failed for resume {resume_id}: {e}")
-        db.update_resume(resume_id, {"processing_status": "failed"})
+        db.update_resume(
+            resume_id,
+            {
+                "processing_status": "failed",
+                "processing_error": parse_error_detail,
+            },
+        )
         return ResumeUploadResponse(
-            message="Retry processing failed",
+            message=f"Retry processing failed: {parse_error_detail}",
             request_id=str(uuid4()),
             resume_id=resume_id,
             processing_status="failed",

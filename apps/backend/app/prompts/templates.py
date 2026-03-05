@@ -88,29 +88,50 @@ RESUME_SCHEMA_EXAMPLE = """{
   }
 }"""
 
-PARSE_RESUME_PROMPT = """Parse this resume into JSON. Output ONLY the JSON object, no other text.
+RESUME_EXTRACTION_SCHEMA_TEMPLATE = """{
+  "personalInfo": {
+    "name": "",
+    "title": "",
+    "email": "",
+    "phone": "",
+    "location": "",
+    "website": null,
+    "linkedin": null,
+    "github": null
+  },
+  "summary": "",
+  "workExperience": [],
+  "education": [],
+  "personalProjects": [],
+  "additional": {
+    "technicalSkills": [],
+    "languages": [],
+    "certificationsTraining": [],
+    "awards": []
+  },
+  "customSections": {}
+}"""
 
-Map content to standard sections when possible. For non-standard sections (like Publications, Volunteer Work, Research, Hobbies), add them to customSections with an appropriate type.
+PARSE_RESUME_PROMPT = """Extract resume data to JSON. Output ONLY one valid JSON object.
 
-Example output format:
+STRICT COMMANDS (MUST FOLLOW):
+1) Copy only information explicitly present in the resume text.
+2) Do NOT invent, infer, rewrite, summarize, translate, normalize, or fix wording.
+3) If a value is not visible, return an empty value ("", [], or null by schema).
+4) Preserve text exactly as seen (including date strings and bullet wording).
+5) Do not add explanations, markdown, or extra keys.
+
+Target JSON schema example:
 {schema}
 
-Custom section types:
-- "text": Single text block (e.g., objective, statement)
-- "itemList": List of items with title, subtitle, years, description (e.g., publications, research)
-- "stringList": Simple list of strings (e.g., hobbies, interests)
+Mapping rules:
+- Map visible content into standard sections first.
+- For non-standard sections, put them into customSections.
+- Use section keys in snake_case in customSections.
+- For list items use incremental IDs starting at 1.
+- Keep dates exactly as written in source text.
 
-Rules:
-- Use "" for missing text fields, [] for missing arrays, null for optional fields
-- Number IDs starting from 1
-- Format years as "YYYY - YYYY" or "YYYY - Present"
-- Use snake_case for custom section keys (e.g., "volunteer_work", "publications")
-- Preserve the original section name as a descriptive key
-- Normalize dates: "Jan 2020" → "2020", "2020-2021" → "2020 - 2021", "Current"/"Ongoing" → "Present"
-- For ambiguous dates like "3 years experience", infer approximate years from context or use "~YYYY"
-- Flag overlapping dates (concurrent roles) by preserving both, don't merge
-
-Resume to parse:
+Resume text:
 {resume_text}"""
 
 EXTRACT_KEYWORDS_PROMPT = """Extract job requirements as JSON. Output ONLY the JSON object, no other text.
