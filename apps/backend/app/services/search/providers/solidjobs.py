@@ -6,6 +6,7 @@ import re
 from typing import Any, Callable
 
 from app.services.search.fetch_with_timeout import fetch_with_timeout
+from app.services.search.providers.searchable_text import extract_searchable_text
 from app.services.search.types import ScrapedOffer
 
 SOLIDJOBS_BASE_URL = "https://solid.jobs"
@@ -124,23 +125,7 @@ def _normalize_offer(offer: dict[str, Any], index: int) -> ScrapedOffer:
         else f"{SOLIDJOBS_BASE_URL}/offers/it"
     )
 
-    searchable_text = _clean_text(
-        " ".join(
-            [
-                title,
-                company,
-                location,
-                salary or "",
-                " ".join(skills),
-                _clean_text(str(offer.get("remotePossible") or "")),
-                _clean_text(str(offer.get("mainCategory") or "")),
-                _clean_text(str(offer.get("subCategory") or "")),
-                _clean_text(str(offer.get("experienceLevel") or "")),
-                _clean_text(str(offer.get("workload") or "")),
-                _clean_text(str(offer.get("division") or "")),
-            ]
-        )
-    ).lower()
+    searchable_text = extract_searchable_text(offer)
 
     return ScrapedOffer(
         id=offer_id,
@@ -205,4 +190,3 @@ async def scrape_solidjobs(
     if on_progress:
         on_progress({"collected": len(result), "progress": 1.0})
     return result
-

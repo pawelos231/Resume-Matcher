@@ -9,6 +9,7 @@ from typing import Any, Callable
 from urllib.parse import quote
 
 from app.services.search.fetch_with_timeout import fetch_with_timeout
+from app.services.search.providers.searchable_text import extract_searchable_text
 from app.services.search.types import ScrapedOffer
 
 BULLDOGJOB_BASE_URL = "https://bulldogjob.pl"
@@ -84,9 +85,7 @@ def _normalize_offer(listing: dict[str, Any], index: int, page: int) -> ScrapedO
         else f"{BULLDOGJOB_BASE_URL}/companies/jobs/{quote(offer_id)}"
     )
 
-    searchable_text = _clean_text(
-        " ".join([title, company, location, salary or "", " ".join(skills)])
-    ).lower()
+    searchable_text = extract_searchable_text(listing)
 
     return ScrapedOffer(
         id=offer_id,
@@ -174,4 +173,3 @@ async def scrape_bulldogjob(
     if on_progress:
         on_progress({"collected": len(result), "progress": 1.0})
     return result
-

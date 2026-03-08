@@ -8,12 +8,31 @@ import re
 from typing import Any, Callable
 
 from app.services.search.fetch_with_timeout import fetch_with_timeout
+from app.services.search.providers.searchable_text import extract_searchable_text
 from app.services.search.types import ScrapedOffer
 
 NO_FLUFF_URL = "https://nofluffjobs.com/pl"
 OFFERS_PER_PAGE = 20
 MAX_SCRAPE_PAGES = 50
 MAX_SCRAPE_PAGES_IN_MAX_MODE = 500
+NO_FLUFF_CATEGORY_SLUGS: tuple[str, ...] = (
+    "backend",
+    "fullstack",
+    "frontend",
+    "mobile",
+    "testing",
+    "devops",
+    "architecture",
+    "security",
+    "embedded",
+    "artificial-intelligence",
+    "data",
+    "sys-administrator",
+    "game-dev",
+    "business-analyst",
+    "ux",
+    "other",
+)
 
 REQUEST_HEADERS = {
     "user-agent": (
@@ -27,6 +46,13 @@ ProgressHandler = Callable[[dict[str, float | int]], None]
 
 def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
+
+
+def _build_category_page_url(category_slug: str, page: int) -> str:
+    base_url = f"{NO_FLUFF_URL}/{category_slug}"
+    if page <= 1:
+        return base_url
+    return f"{base_url}?page={page}"
 
 
 def _parse_json_array_at(html: str, array_start: int) -> list[Any]:
@@ -156,7 +182,12 @@ def _extract_skills(posting: dict[str, Any]) -> list[str]:
     return skills
 
 
-def _normalize_posting(posting: dict[str, Any], index: int, page: int) -> ScrapedOffer:
+def _normalize_posting(
+    posting: dict[str, Any],
+    index: int,
+    page: int,
+    category_slug: str,
+) -> ScrapedOffer:
     title = _clean_text(str(posting.get("title") or "Untitled"))
     company = _clean_text(str(posting.get("name") or "Unknown company"))
     location = _format_location(posting)
@@ -164,11 +195,11 @@ def _normalize_posting(posting: dict[str, Any], index: int, page: int) -> Scrape
     salary = _format_salary(posting.get("salary"))
     slug = _clean_text(str(posting.get("url") or ""))
     url = f"https://nofluffjobs.com/pl/job/{slug}" if slug else "https://nofluffjobs.com/pl"
-    offer_id = _clean_text(str(posting.get("id") or f"nofluff-{page}-{index}"))
+    offer_id = _clean_text(
+        str(posting.get("id") or f"nofluff-{category_slug}-{page}-{index}")
+    )
 
-    searchable_text = _clean_text(
-        " ".join([title, company, location, salary or "", " ".join(skills)])
-    ).lower()
+    searchable_text = extract_searchable_text(posting)
 
     return ScrapedOffer(
         id=offer_id,
@@ -183,54 +214,86 @@ def _normalize_posting(posting: dict[str, Any], index: int, page: int) -> Scrape
     )
 
 
+def _interleave_category_offers(
+    offers_by_category: dict[str, list[ScrapedOffer]],
+) -> list[ScrapedOffer]:
+    interleaved: list[ScrapedOffer] = []
+    longest_bucket = max((len(bucket) for bucket in offers_by_category.values()), default=0)
+
+    for item_index in range(longest_bucket):
+        for category_slug in NO_FLUFF_CATEGORY_SLUGS:
+            bucket = offers_by_category[category_slug]
+            if item_index < len(bucket):
+                interleaved.append(bucket[item_index])
+
+    return interleaved
+
+
 async def scrape_nofluffjobs(
     target_count: int | None,
     on_progress: ProgressHandler | None = None,
 ) -> list[ScrapedOffer]:
     """Scrape NoFluffJobs offers."""
-    offers: list[ScrapedOffer] = []
-    pages_processed = 0
-    page_limit = (
-        MAX_SCRAPE_PAGES_IN_MAX_MODE
+    offers_by_category: dict[str, list[ScrapedOffer]] = {
+        category_slug: [] for category_slug in NO_FLUFF_CATEGORY_SLUGS
+    }
+    seen_offer_keys: set[str] = set()
+    desired_offer_budget = (
+        OFFERS_PER_PAGE * MAX_SCRAPE_PAGES_IN_MAX_MODE
         if target_count is None
-        else min(max(math.ceil(target_count / OFFERS_PER_PAGE), 1), MAX_SCRAPE_PAGES)
+        else max(target_count, 1)
     )
+    round_limit = min(
+        max(
+            math.ceil(
+                desired_offer_budget / (OFFERS_PER_PAGE * len(NO_FLUFF_CATEGORY_SLUGS))
+            ),
+            1,
+        ),
+        MAX_SCRAPE_PAGES_IN_MAX_MODE if target_count is None else MAX_SCRAPE_PAGES,
+    )
+    total_requests = round_limit * len(NO_FLUFF_CATEGORY_SLUGS)
+    processed_requests = 0
 
-    for page in range(1, page_limit + 1):
-        if target_count is not None and len(offers) >= target_count:
-            break
-
-        pages_processed = page
-        url = f"{NO_FLUFF_URL}?page={page}"
-        response = await fetch_with_timeout(url, headers=REQUEST_HEADERS)
-        if response.status < 200 or response.status >= 300:
-            raise RuntimeError(f"NoFluffJobs request failed with status {response.status}")
-
-        postings = _extract_postings_from_html(response.text)
-        if not postings:
-            continue
-
-        normalized = [
-            _normalize_posting(posting, index, page)
-            for index, posting in enumerate(postings)
-        ]
-        offers.extend(normalized)
-
-        if on_progress:
-            progress = (
-                min(page / page_limit, 1.0)
-                if target_count is None
-                else min(len(offers) / max(target_count, 1), 1.0)
+    for page in range(1, round_limit + 1):
+        for category_slug in NO_FLUFF_CATEGORY_SLUGS:
+            processed_requests += 1
+            response = await fetch_with_timeout(
+                _build_category_page_url(category_slug, page),
+                headers=REQUEST_HEADERS,
             )
-            on_progress({"collected": len(offers), "progress": progress})
+            if response.status < 200 or response.status >= 300:
+                raise RuntimeError(
+                    f"NoFluffJobs request failed with status {response.status}"
+                )
 
-        if len(postings) < OFFERS_PER_PAGE:
+            postings = _extract_postings_from_html(response.text)
+            for index, posting in enumerate(postings):
+                normalized = _normalize_posting(posting, index, page, category_slug)
+                key = normalized.url or normalized.id
+                if key in seen_offer_keys:
+                    continue
+                seen_offer_keys.add(key)
+                offers_by_category[category_slug].append(normalized)
+
+            total_offers = sum(len(bucket) for bucket in offers_by_category.values())
+
+            if on_progress:
+                progress = (
+                    min(processed_requests / max(total_requests, 1), 1.0)
+                    if target_count is None
+                    else min(total_offers / max(target_count, 1), 1.0)
+                )
+                on_progress({"collected": total_offers, "progress": progress})
+
+        total_offers = sum(len(bucket) for bucket in offers_by_category.values())
+        if target_count is not None and total_offers >= target_count:
             break
 
-    result = offers if target_count is None else offers[:target_count]
+    interleaved_offers = _interleave_category_offers(offers_by_category)
+    result = interleaved_offers if target_count is None else interleaved_offers[:target_count]
 
     if on_progress:
         on_progress({"collected": len(result), "progress": 1.0})
 
     return result
-

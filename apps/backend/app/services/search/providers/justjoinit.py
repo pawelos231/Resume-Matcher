@@ -8,6 +8,7 @@ import re
 from typing import Any, Callable
 
 from app.services.search.fetch_with_timeout import fetch_with_timeout
+from app.services.search.providers.searchable_text import extract_searchable_text
 from app.services.search.types import ScrapedOffer
 
 JUST_JOIN_IT_URL = "https://justjoin.it"
@@ -156,9 +157,7 @@ def _normalize_offer(
     offer_id = path_parts[-1].strip() if path_parts else f"justjoinit-{index}"
     description = _clean_text(str(posting.get("description") or ""))
 
-    searchable_text = _clean_text(
-        " ".join([title, company, location, salary or "", " ".join(skills), description])
-    ).lower()
+    searchable_text = extract_searchable_text(posting, skills, description)
 
     return ScrapedOffer(
         id=offer_id,
@@ -269,4 +268,3 @@ async def scrape_justjoinit(
     if on_progress:
         on_progress({"collected": len(result), "progress": 1.0})
     return result
-

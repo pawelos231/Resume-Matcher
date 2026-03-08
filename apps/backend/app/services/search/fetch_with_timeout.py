@@ -13,7 +13,8 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 DEFAULT_FETCH_TIMEOUT_MS = 15_000
-RETRY_ON_429_DELAYS_S = (0.25, 0.5, 1.0, 2.0, 5.0)
+RETRYABLE_STATUS_DELAYS_S = (0.25, 0.5, 1.0, 2.0, 5.0)
+RETRYABLE_HTTP_STATUSES = {429, 502, 503, 504}
 
 
 @dataclass(slots=True)
@@ -104,8 +105,8 @@ async def fetch_with_timeout(
     body: bytes | None = None,
     timeout_ms: int = DEFAULT_FETCH_TIMEOUT_MS,
 ) -> FetchResponse:
-    """Perform HTTP request with timeout and retry on 429."""
-    for retry_index in range(len(RETRY_ON_429_DELAYS_S) + 1):
+    """Perform HTTP request with timeout and retry on transient HTTP statuses."""
+    for retry_index in range(len(RETRYABLE_STATUS_DELAYS_S) + 1):
         response = await asyncio.to_thread(
             _sync_fetch,
             url,
@@ -115,10 +116,12 @@ async def fetch_with_timeout(
             timeout_ms=timeout_ms,
         )
 
-        if response.status != 429 or retry_index >= len(RETRY_ON_429_DELAYS_S):
+        if (
+            response.status not in RETRYABLE_HTTP_STATUSES
+            or retry_index >= len(RETRYABLE_STATUS_DELAYS_S)
+        ):
             return response
 
-        await asyncio.sleep(RETRY_ON_429_DELAYS_S[retry_index])
+        await asyncio.sleep(RETRYABLE_STATUS_DELAYS_S[retry_index])
 
     raise RuntimeError(f"Retry loop exhausted unexpectedly for {_to_url_label(url)}")
-

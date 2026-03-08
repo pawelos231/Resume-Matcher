@@ -135,7 +135,12 @@ AI_PHRASE_REPLACEMENTS: dict[str, str] = {
 
 
 # Prompt for injecting missing keywords into a resume
-KEYWORD_INJECTION_PROMPT = """Inject the following keywords into this resume where they can be naturally and TRUTHFULLY incorporated.
+KEYWORD_INJECTION_PROMPT = """Inject the following keywords into this resume where they can be naturally and truthfully incorporated.
+
+ABSOLUTE HONESTY:
+- Base every claim only on the master resume and current resume content
+- You may lightly polish wording, but you must never fabricate, exaggerate, or lie
+- If the resume does not support a keyword or claim, omit it
 
 CRITICAL RULES:
 1. Only add keywords where the master resume provides supporting evidence

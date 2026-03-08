@@ -412,8 +412,11 @@ async def inject_keywords(
         result = await complete_json(
             prompt=prompt,
             system_prompt=(
-                "You are a resume editor. Inject keywords naturally without adding "
-                "fabricated content. Return only valid JSON matching the input schema."
+                "You are a resume editor. Base every claim only on facts supported "
+                "by the master resume and current resume. You may lightly polish "
+                "wording, but you must never fabricate, exaggerate, or lie. "
+                "Inject keywords naturally and return only valid JSON matching "
+                "the input schema."
             ),
             max_tokens=8192,
         )

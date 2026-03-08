@@ -13,6 +13,7 @@ OfferSource = Literal[
     "bulldogjob",
     "theprotocol",
     "solidjobs",
+    "pracujpl",
 ]
 KeywordMode = Literal["and", "or"]
 OfferSortBy = Literal["relevance", "name", "salary"]

@@ -9,6 +9,7 @@ from typing import Any, Callable
 from urllib.parse import unquote
 
 from app.services.search.fetch_with_timeout import fetch_with_timeout
+from app.services.search.providers.searchable_text import extract_searchable_text
 from app.services.search.types import ScrapedOffer
 
 THE_PROTOCOL_BASE_URL = "https://theprotocol.it"
@@ -148,9 +149,7 @@ def _normalize_offer(offer: dict[str, Any], index: int) -> ScrapedOffer:
         if normalized:
             project_chunks.append(normalized)
 
-    searchable_text = _clean_text(
-        " ".join([title, company, location, salary or "", " ".join(skills), " ".join(project_chunks)])
-    ).lower()
+    searchable_text = extract_searchable_text(offer, project_chunks)
 
     return ScrapedOffer(
         id=offer_id,
@@ -275,4 +274,3 @@ async def scrape_theprotocol(
     if on_progress:
         on_progress({"collected": len(result), "progress": 1.0})
     return result
-

@@ -34,6 +34,7 @@ SOURCE_LABELS: dict[OfferSource, str] = {
     "bulldogjob": "Bulldogjob",
     "theprotocol": "theprotocol.it",
     "solidjobs": "Solid.jobs",
+    "pracujpl": "Pracuj.pl",
 }
 
 

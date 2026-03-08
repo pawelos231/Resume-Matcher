@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import datetime as dt
+import json
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
+from threading import Lock
 from typing import Any, Callable, Literal
 
 from app.services.search.providers import (
     scrape_bulldogjob,
     scrape_justjoinit,
     scrape_nofluffjobs,
+    scrape_pracujpl,
     scrape_solidjobs,
     scrape_theprotocol,
 )
@@ -27,10 +32,13 @@ from app.services.search.types import (
 DEFAULT_LIMIT = 1000
 MAX_LIMIT = 10_000
 MAX_SCRAPE_LIMIT = 10_000
+MIN_SOURCE_SCRAPE_TIMEOUT_S = 15
+MAX_SOURCE_SCRAPE_TIMEOUT_S = 600
 # Keep scrape runs responsive in UI. "max" mode can scan many pages, but should still
 # fail fast enough to avoid appearing hung from the frontend perspective.
-SOURCE_SCRAPE_TIMEOUT_S = 45
-SOURCE_SCRAPE_TIMEOUT_IN_MAX_MODE_S = 60
+SOURCE_SCRAPE_TIMEOUT_S = 60
+SOURCE_SCRAPE_TIMEOUT_IN_MAX_MODE_S = 180
+SEARCH_RESULT_CACHE_TTL_S = 180
 DEFAULT_KEYWORD_MODE: KeywordMode = "and"
 DEFAULT_SORT_BY: OfferSortBy = "relevance"
 DEFAULT_SORT_DIRECTION: OfferSortDirection = "asc"
@@ -40,6 +48,7 @@ ALL_SOURCES: list[OfferSource] = [
     "bulldogjob",
     "theprotocol",
     "solidjobs",
+    "pracujpl",
 ]
 
 SOURCE_LABELS: dict[OfferSource, str] = {
@@ -48,6 +57,7 @@ SOURCE_LABELS: dict[OfferSource, str] = {
     "bulldogjob": "Bulldogjob",
     "theprotocol": "theprotocol.it",
     "solidjobs": "Solid.jobs",
+    "pracujpl": "Pracuj.pl",
 }
 
 SOURCE_LIMIT_QUERY_KEYS: dict[OfferSource, list[str]] = {
@@ -81,6 +91,12 @@ SOURCE_LIMIT_QUERY_KEYS: dict[OfferSource, list[str]] = {
         "solidjobsLimit",
         "solidLimit",
     ],
+    "pracujpl": [
+        "scrapeLimitPracujPl",
+        "scrapeLimitPracuj",
+        "pracujplLimit",
+        "pracujLimit",
+    ],
 }
 
 DEFAULT_SOURCE_TARGETS: dict[OfferSource, int | None] = {
@@ -89,10 +105,22 @@ DEFAULT_SOURCE_TARGETS: dict[OfferSource, int | None] = {
     "bulldogjob": None,
     "theprotocol": None,
     "solidjobs": None,
+    "pracujpl": 50,
 }
 
 ScrapeTargetLabel = int | Literal["max"]
 ProgressHandler = Callable[[dict[str, Any]], None]
+
+
+@dataclass(slots=True)
+class CachedSearchResult:
+    expires_at: float
+    status: int
+    payload: dict[str, Any]
+
+
+_SEARCH_RESULT_CACHE: dict[str, CachedSearchResult] = {}
+_SEARCH_RESULT_CACHE_LOCK = asyncio.Lock()
 
 
 def _get_param(params: Mapping[str, str], key: str) -> str | None:
@@ -146,8 +174,8 @@ def parse_keywords(params: Mapping[str, str]) -> list[str]:
     raw = _get_param(params, "keywords") or _get_param(params, "q") or ""
     keywords: list[str] = []
     seen: set[str] = set()
-    for token in raw.replace(",", " ").split():
-        normalized = token.strip().lower()
+    for token in raw.split(","):
+        normalized = " ".join(token.strip().lower().split())
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
@@ -208,6 +236,29 @@ def parse_stream_mode(params: Mapping[str, str]) -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+def parse_scrape_timeout_seconds(params: Mapping[str, str]) -> int | None:
+    raw = (
+        _get_param(params, "timeoutSeconds")
+        or _get_param(params, "scrapeTimeoutSeconds")
+        or _get_param(params, "timeout")
+    )
+    if raw is None:
+        return None
+
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return None
+
+    if parsed <= 0:
+        return None
+
+    return max(
+        MIN_SOURCE_SCRAPE_TIMEOUT_S,
+        min(parsed, MAX_SOURCE_SCRAPE_TIMEOUT_S),
+    )
+
+
 def _has_salary_range(salary: str | None) -> bool:
     if not salary:
         return False
@@ -228,8 +279,33 @@ def _has_keyword_match(
     return matched_count > 0
 
 
-def _tokenize_title_words(title: str) -> set[str]:
-    return {token.casefold() for token in title.split() if token.strip()}
+def _normalize_search_text(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def _tokenize_search_text(searchable_text: str) -> list[str]:
+    return [token for token in _normalize_search_text(searchable_text).split() if token]
+
+
+def _keyword_matches_tokens(keyword: str, tokens: list[str]) -> bool:
+    normalized_keyword = _normalize_search_text(keyword)
+    if not normalized_keyword:
+        return False
+    return any(normalized_keyword in token for token in tokens)
+
+
+def _get_offer_searchable_text(offer: ScrapedOffer) -> str:
+    if offer.searchable_text.strip():
+        return offer.searchable_text
+    return " ".join(
+        [
+            offer.title,
+            offer.company,
+            offer.location,
+            offer.salary or "",
+            " ".join(offer.skills),
+        ]
+    )
 
 
 def dedupe_offers(offers: list[ScrapedOffer]) -> list[ScrapedOffer]:
@@ -248,9 +324,10 @@ def to_public_offers(
 ) -> list[PublicOffer]:
     with_matches: list[PublicOffer] = []
     for offer in offers:
-        title_tokens = _tokenize_title_words(offer.title)
+        searchable_text = _get_offer_searchable_text(offer)
+        tokens = _tokenize_search_text(searchable_text)
         matched_keywords = [
-            keyword for keyword in keywords if keyword.casefold() in title_tokens
+            keyword for keyword in keywords if _keyword_matches_tokens(keyword, tokens)
         ]
         if not _has_keyword_match(len(matched_keywords), len(keywords), keyword_mode):
             continue
@@ -324,6 +401,59 @@ def _to_scrape_target_label(target: int | None) -> ScrapeTargetLabel:
     return "max" if target is None else target
 
 
+def _build_search_cache_key(
+    limit: int,
+    keywords: list[str],
+    keyword_mode: KeywordMode,
+    salary_range_only: bool,
+    sort_by: OfferSortBy,
+    sort_direction: OfferSortDirection,
+    source_targets: dict[OfferSource, int | None],
+    timeout_override_s: int | None,
+) -> str:
+    return json.dumps(
+        {
+            "limit": limit,
+            "keywords": keywords,
+            "keywordMode": keyword_mode,
+            "salaryRangeOnly": salary_range_only,
+            "sortBy": sort_by,
+            "sortDirection": sort_direction,
+            "sourceTargets": {source: source_targets[source] for source in ALL_SOURCES},
+            "timeoutSeconds": timeout_override_s,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+async def _get_cached_search_result(
+    cache_key: str,
+) -> tuple[int, dict[str, Any]] | None:
+    async with _SEARCH_RESULT_CACHE_LOCK:
+        cached = _SEARCH_RESULT_CACHE.get(cache_key)
+        if cached is None:
+            return None
+        if cached.expires_at <= time.time():
+            _SEARCH_RESULT_CACHE.pop(cache_key, None)
+            return None
+        return cached.status, copy.deepcopy(cached.payload)
+
+
+async def _set_cached_search_result(
+    cache_key: str,
+    status: int,
+    payload: dict[str, Any],
+) -> None:
+    async with _SEARCH_RESULT_CACHE_LOCK:
+        _SEARCH_RESULT_CACHE[cache_key] = CachedSearchResult(
+            expires_at=time.time() + SEARCH_RESULT_CACHE_TTL_S,
+            status=status,
+            payload=copy.deepcopy(payload),
+        )
+
+
 def _get_scraped_total(scraped_by_source: dict[OfferSource, int]) -> int:
     return sum(scraped_by_source[source] for source in ALL_SOURCES)
 
@@ -369,11 +499,25 @@ async def run_scrape(
     salary_range_only = parse_salary_range_only(params)
     sort_by = parse_sort_by(params)
     sort_direction = parse_sort_direction(params)
+    timeout_override_s = parse_scrape_timeout_seconds(params)
 
     source_targets: dict[OfferSource, int | None] = {
         source: parse_source_scrape_limit(params, source, DEFAULT_SOURCE_TARGETS[source])
         for source in ALL_SOURCES
     }
+    cache_key = _build_search_cache_key(
+        limit,
+        keywords,
+        keyword_mode,
+        salary_range_only,
+        sort_by,
+        sort_direction,
+        source_targets,
+        timeout_override_s,
+    )
+    cached_result = await _get_cached_search_result(cache_key)
+    if cached_result is not None:
+        return cached_result
 
     requested_scrape_by_source: dict[OfferSource, ScrapeTargetLabel] = {
         source: _to_scrape_target_label(source_targets[source]) for source in ALL_SOURCES
@@ -389,29 +533,40 @@ async def run_scrape(
     source_progress: dict[OfferSource, float] = {
         source: (0.0 if source in active_sources else 1.0) for source in ALL_SOURCES
     }
+    progress_state_lock = Lock()
+
+    def build_progress_event(
+        stage: str,
+        progress_percent: int,
+        message: str,
+    ) -> dict[str, Any]:
+        return {
+            "stage": stage,
+            "progressPercent": progress_percent,
+            "message": message,
+            "requestedScrapeBySource": requested_scrape_by_source,
+            "scrapedTotalCount": _get_scraped_total(scraped_by_source),
+            "scrapedBySource": dict(scraped_by_source),
+        }
 
     def send_progress_event(stage: str, progress_percent: int, message: str) -> None:
         if not on_progress:
             return
-        on_progress(
-            {
-                "stage": stage,
-                "progressPercent": progress_percent,
-                "message": message,
-                "requestedScrapeBySource": requested_scrape_by_source,
-                "scrapedTotalCount": _get_scraped_total(scraped_by_source),
-                "scrapedBySource": dict(scraped_by_source),
-            }
-        )
+        with progress_state_lock:
+            event = build_progress_event(stage, progress_percent, message)
+        on_progress(event)
 
     def update_source_progress(source: OfferSource, collected: int, progress: float) -> None:
-        scraped_by_source[source] = collected
-        source_progress[source] = _clamp_progress(progress)
-        send_progress_event(
-            "scraping",
-            _compute_progress_percent(source_progress, active_sources),
-            f"Scraping {SOURCE_LABELS[source]} ({collected} offers)",
-        )
+        with progress_state_lock:
+            scraped_by_source[source] = collected
+            source_progress[source] = _clamp_progress(progress)
+            event = build_progress_event(
+                "scraping",
+                _compute_progress_percent(source_progress, active_sources),
+                f"Scraping {SOURCE_LABELS[source]} ({collected} offers)",
+            )
+        if on_progress:
+            on_progress(event)
 
     async def run_nofluffjobs() -> list[ScrapedOffer]:
         return await scrape_nofluffjobs(
@@ -453,12 +608,21 @@ async def run_scrape(
             ),
         )
 
+    async def run_pracujpl() -> list[ScrapedOffer]:
+        return await scrape_pracujpl(
+            source_targets["pracujpl"],
+            lambda event: update_source_progress(
+                "pracujpl", int(event["collected"]), float(event["progress"])
+            ),
+        )
+
     scrape_tasks: list[tuple[OfferSource, int | None, Callable[[], Any]]] = [
         ("nofluffjobs", source_targets["nofluffjobs"], run_nofluffjobs),
         ("justjoinit", source_targets["justjoinit"], run_justjoinit),
         ("bulldogjob", source_targets["bulldogjob"], run_bulldogjob),
         ("theprotocol", source_targets["theprotocol"], run_theprotocol),
         ("solidjobs", source_targets["solidjobs"], run_solidjobs),
+        ("pracujpl", source_targets["pracujpl"], run_pracujpl),
     ]
 
     send_progress_event("start", 0, "Starting scrape...")
@@ -470,13 +634,15 @@ async def run_scrape(
     ) -> list[ScrapedOffer]:
         if target is not None and target <= 0:
             return []
-        timeout_s = (
+        timeout_s = timeout_override_s or (
             SOURCE_SCRAPE_TIMEOUT_IN_MAX_MODE_S
             if target is None
             else SOURCE_SCRAPE_TIMEOUT_S
         )
         return await _run_with_timeout(SOURCE_LABELS[source], timeout_s, runner)
 
+    # asyncio.gather preserves the task submission order in the returned list,
+    # so final aggregation stays deterministic even when scrapers finish out of order.
     results = await asyncio.gather(
         *[
             _execute_task(source, target, runner)
@@ -494,8 +660,9 @@ async def run_scrape(
             if target is None or target > 0:
                 errors.append({"source": source, "message": str(result)})
             continue
-        scraped_by_source[source] = len(result)
-        source_progress[source] = 1.0
+        with progress_state_lock:
+            scraped_by_source[source] = len(result)
+            source_progress[source] = 1.0
         collected.extend(result)
 
     send_progress_event("finalizing", 97, "Finalizing and filtering results...")
@@ -538,4 +705,6 @@ async def run_scrape(
     }
 
     send_progress_event("done", 100, "Scraping completed")
+    if not errors:
+        await _set_cached_search_result(cache_key, status, payload)
     return status, payload

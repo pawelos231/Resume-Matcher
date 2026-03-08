@@ -11,6 +11,7 @@ OfferSource = Literal[
     "bulldogjob",
     "theprotocol",
     "solidjobs",
+    "pracujpl",
 ]
 
 KeywordMode = Literal["and", "or"]
@@ -20,7 +21,7 @@ OfferSortDirection = Literal["asc", "desc"]
 
 @dataclass(slots=True)
 class ScrapedOffer:
-    """Raw offer collected from provider, including internal searchable text."""
+    """Raw offer collected from provider, including provider text used for matching."""
 
     id: str
     source: OfferSource
@@ -52,4 +53,3 @@ class ScraperProgress(TypedDict):
 
     collected: int
     progress: float
-

@@ -161,7 +161,8 @@ CRITICAL_TRUTHFULNESS_RULES_TEMPLATE = """CRITICAL TRUTHFULNESS RULES - NEVER VI
 5. DO NOT add languages, frameworks, or platforms the candidate hasn't used
 6. DO NOT extend employment dates or change timelines (start/end years)
 7. {rule_7}
-8. Preserve factual accuracy - only use information provided by the candidate
+8. Base every claim only on information explicitly supported by the original resume
+9. You may lightly polish or strengthen wording, but you must never fabricate, exaggerate, or lie
 
 Violation of these rules could cause serious problems for the candidate in job interviews.
 """
@@ -188,6 +189,7 @@ IMPROVE_RESUME_PROMPT_NUDGE = """Lightly nudge this resume toward the job descri
 {critical_truthfulness_rules}
 
 IMPORTANT: Generate ALL text content (summary, descriptions, skills) in {output_language}.
+ABSOLUTE HONESTY: Base every claim only on the original resume. You may lightly polish wording, but you must never fabricate, exaggerate, or lie.
 
 Rules:
 - Make minimal, conservative edits only where there is a clear existing match
@@ -218,6 +220,7 @@ IMPROVE_RESUME_PROMPT_KEYWORDS = """Enhance this resume with relevant keywords f
 {critical_truthfulness_rules}
 
 IMPORTANT: Generate ALL text content (summary, descriptions, skills) in {output_language}.
+ABSOLUTE HONESTY: Base every claim only on the original resume. You may lightly polish wording, but you must never fabricate, exaggerate, or lie.
 
 Rules:
 - Strengthen alignment by weaving in relevant keywords where evidence already exists
@@ -246,6 +249,7 @@ IMPROVE_RESUME_PROMPT_FULL = """Tailor this resume for the job. Output ONLY the 
 {critical_truthfulness_rules}
 
 IMPORTANT: Generate ALL text content (summary, descriptions, skills) in {output_language}.
+ABSOLUTE HONESTY: Base every claim only on the original resume. You may lightly polish wording, but you must never fabricate, exaggerate, or lie.
 
 Rules:
 - Rephrase content to highlight relevant experience
