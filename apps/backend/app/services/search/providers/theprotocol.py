@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import re
@@ -222,46 +223,32 @@ async def scrape_theprotocol(
     on_progress: ProgressHandler | None = None,
 ) -> list[ScrapedOffer]:
     """Scrape theprotocol.it offers."""
-    xsrf_token, cookie = await _create_session()
     offers: list[ScrapedOffer] = []
-    pages_processed = 0
+    try:
+        xsrf_token, cookie = await _create_session()
+        pages_processed = 0
 
-    first_page = await _fetch_search_page(1, xsrf_token, cookie)
-    page_meta = first_page.get("page") or {}
-    total_pages = max(int(page_meta.get("count") or 1), 1)
-    page_limit = (
-        total_pages
-        if target_count is None
-        else min(max(math.ceil(target_count / PAGE_SIZE), 1), total_pages)
-    )
-
-    def _process_items(items: Any, page_number: int) -> None:
-        if not isinstance(items, list):
-            return
-        for item in items:
-            if target_count is not None and len(offers) >= target_count:
-                break
-            if not isinstance(item, dict):
-                continue
-            offers.append(_normalize_offer(item, len(offers) + page_number * PAGE_SIZE))
-
-    _process_items(first_page.get("offers"), 1)
-    pages_processed = 1
-    if on_progress:
-        progress = (
-            min(pages_processed / max(page_limit, 1), 1.0)
+        first_page = await _fetch_search_page(1, xsrf_token, cookie)
+        page_meta = first_page.get("page") or {}
+        total_pages = max(int(page_meta.get("count") or 1), 1)
+        page_limit = (
+            total_pages
             if target_count is None
-            else min(len(offers) / max(target_count, 1), 1.0)
+            else min(max(math.ceil(target_count / PAGE_SIZE), 1), total_pages)
         )
-        on_progress({"collected": len(offers), "progress": progress})
 
-    for page_number in range(2, page_limit + 1):
-        if target_count is not None and len(offers) >= target_count:
-            break
-        payload = await _fetch_search_page(page_number, xsrf_token, cookie)
-        _process_items(payload.get("offers"), page_number)
-        pages_processed = page_number
+        def _process_items(items: Any, page_number: int) -> None:
+            if not isinstance(items, list):
+                return
+            for item in items:
+                if target_count is not None and len(offers) >= target_count:
+                    break
+                if not isinstance(item, dict):
+                    continue
+                offers.append(_normalize_offer(item, len(offers) + page_number * PAGE_SIZE))
 
+        _process_items(first_page.get("offers"), 1)
+        pages_processed = 1
         if on_progress:
             progress = (
                 min(pages_processed / max(page_limit, 1), 1.0)
@@ -269,6 +256,23 @@ async def scrape_theprotocol(
                 else min(len(offers) / max(target_count, 1), 1.0)
             )
             on_progress({"collected": len(offers), "progress": progress})
+
+        for page_number in range(2, page_limit + 1):
+            if target_count is not None and len(offers) >= target_count:
+                break
+            payload = await _fetch_search_page(page_number, xsrf_token, cookie)
+            _process_items(payload.get("offers"), page_number)
+            pages_processed = page_number
+
+            if on_progress:
+                progress = (
+                    min(pages_processed / max(page_limit, 1), 1.0)
+                    if target_count is None
+                    else min(len(offers) / max(target_count, 1), 1.0)
+                )
+                on_progress({"collected": len(offers), "progress": progress})
+    except asyncio.CancelledError:
+        return offers if target_count is None else offers[:target_count]
 
     result = offers if target_count is None else offers[:target_count]
     if on_progress:

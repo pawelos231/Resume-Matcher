@@ -56,6 +56,8 @@ from app.schemas.search import (
     SearchScrapeResponse,
     SearchProgressEvent,
     SearchDoneEvent,
+    SearchStopRequest,
+    SearchStopResponse,
     SearchGenerateJobDescriptionRequest,
     SearchGenerateJobDescriptionResponse,
 )
@@ -114,6 +116,8 @@ __all__ = [
     "SearchScrapeResponse",
     "SearchProgressEvent",
     "SearchDoneEvent",
+    "SearchStopRequest",
+    "SearchStopResponse",
     "SearchGenerateJobDescriptionRequest",
     "SearchGenerateJobDescriptionResponse",
 ]

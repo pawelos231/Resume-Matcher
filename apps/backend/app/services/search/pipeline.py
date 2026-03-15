@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import copy
 import datetime as dt
 import json
@@ -490,6 +491,7 @@ async def _run_with_timeout(
 async def run_scrape(
     params: Mapping[str, str],
     on_progress: ProgressHandler | None = None,
+    stop_event: asyncio.Event | None = None,
 ) -> tuple[int, dict[str, Any]]:
     """Run the full multi-source scraping pipeline."""
     started_at = time.time()
@@ -624,6 +626,8 @@ async def run_scrape(
         ("solidjobs", source_targets["solidjobs"], run_solidjobs),
         ("pracujpl", source_targets["pracujpl"], run_pracujpl),
     ]
+    task_entries: list[tuple[OfferSource, int | None, asyncio.Task[list[ScrapedOffer]]]] = []
+    stop_requested = False
 
     send_progress_event("start", 0, "Starting scrape...")
 
@@ -641,24 +645,70 @@ async def run_scrape(
         )
         return await _run_with_timeout(SOURCE_LABELS[source], timeout_s, runner)
 
-    # asyncio.gather preserves the task submission order in the returned list,
-    # so final aggregation stays deterministic even when scrapers finish out of order.
-    results = await asyncio.gather(
-        *[
-            _execute_task(source, target, runner)
-            for source, target, runner in scrape_tasks
-        ],
-        return_exceptions=True,
+    for source, target, runner in scrape_tasks:
+        task_entries.append(
+            (
+                source,
+                target,
+                asyncio.create_task(_execute_task(source, target, runner)),
+            )
+        )
+
+    pending_tasks: set[asyncio.Task[list[ScrapedOffer]]] = {
+        task for _, _, task in task_entries
+    }
+    stop_waiter = (
+        asyncio.create_task(stop_event.wait())
+        if stop_event is not None
+        else None
     )
+
+    try:
+        while pending_tasks:
+            wait_set: set[asyncio.Task[Any]] = set(pending_tasks)
+            if stop_waiter is not None:
+                wait_set.add(stop_waiter)
+
+            done, _ = await asyncio.wait(
+                wait_set,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if stop_waiter is not None and stop_waiter in done:
+                stop_requested = True
+                send_progress_event(
+                    "finalizing",
+                    _compute_progress_percent(source_progress, active_sources),
+                    "Stopping scrape and returning partial results...",
+                )
+                for task in pending_tasks:
+                    task.cancel()
+                break
+
+            pending_tasks -= {
+                task for task in done if task is not stop_waiter
+            }
+    finally:
+        if stop_waiter is not None and not stop_waiter.done():
+            stop_waiter.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await stop_waiter
 
     errors: list[dict[str, str]] = []
     collected: list[ScrapedOffer] = []
 
-    for index, (source, target, _) in enumerate(scrape_tasks):
-        result = results[index]
-        if isinstance(result, Exception):
+    for source, target, task in task_entries:
+        try:
+            result = await task
+        except asyncio.CancelledError:
+            if stop_requested:
+                continue
             if target is None or target > 0:
-                errors.append({"source": source, "message": str(result)})
+                errors.append({"source": source, "message": "Scraping was cancelled"})
+            continue
+        except Exception as exc:
+            if target is None or target > 0:
+                errors.append({"source": source, "message": str(exc)})
             continue
         with progress_state_lock:
             scraped_by_source[source] = len(result)
@@ -680,7 +730,13 @@ async def run_scrape(
     attempted_source_count = sum(
         1 for _, target, _ in scrape_tasks if target is None or target > 0
     )
-    status = 502 if attempted_source_count > 0 and len(errors) == attempted_source_count else 200
+    status = (
+        502
+        if not stop_requested
+        and attempted_source_count > 0
+        and len(errors) == attempted_source_count
+        else 200
+    )
 
     payload = {
         "meta": {
@@ -688,6 +744,7 @@ async def run_scrape(
                 "+00:00", "Z"
             ),
             "durationMs": round((time.time() - started_at) * 1000),
+            "wasStopped": stop_requested,
             "requestedScrapeBySource": requested_scrape_by_source,
             "scrapedTotalCount": scraped_total_count,
             "scrapedBySource": scraped_by_source,
@@ -704,7 +761,13 @@ async def run_scrape(
         "errors": errors,
     }
 
-    send_progress_event("done", 100, "Scraping completed")
-    if not errors:
+    send_progress_event(
+        "done",
+        100,
+        "Scraping stopped. Returning partial results."
+        if stop_requested
+        else "Scraping completed",
+    )
+    if not errors and not stop_requested:
         await _set_cached_search_result(cache_key, status, payload)
     return status, payload

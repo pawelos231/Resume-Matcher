@@ -1,4 +1,4 @@
-import { API_BASE } from './client';
+import { API_BASE, apiPost } from './client';
 
 export type OfferSource =
   | 'nofluffjobs'
@@ -32,6 +32,7 @@ export type SearchScraperError = {
 export type SearchScrapeMeta = {
   generatedAt: string;
   durationMs: number;
+  wasStopped: boolean;
   requestedScrapeBySource: Record<OfferSource, number | 'max'>;
   scrapedTotalCount: number;
   scrapedBySource: Record<OfferSource, number>;
@@ -89,6 +90,7 @@ export type SearchScrapeParams = {
   sortBy: OfferSortBy;
   sortDirection: OfferSortDirection;
   sourceLimits: Record<OfferSource, string>;
+  requestId?: string;
   timeoutSeconds?: number;
 };
 
@@ -111,6 +113,9 @@ export function buildSearchScrapeUrl(params: SearchScrapeParams, stream = false)
   query.set('sortDirection', params.sortDirection);
   if (typeof params.timeoutSeconds === 'number' && Number.isFinite(params.timeoutSeconds)) {
     query.set('timeoutSeconds', String(params.timeoutSeconds));
+  }
+  if (params.requestId) {
+    query.set('requestId', params.requestId);
   }
 
   (Object.keys(SOURCE_QUERY_KEYS) as OfferSource[]).forEach((source) => {
@@ -158,5 +163,22 @@ export async function generateJobDescriptionFromSearchOffer(
     return JSON.parse(text) as SearchGenerateJobDescriptionResponse;
   } catch {
     throw new Error('Job description generation returned invalid JSON.');
+  }
+}
+
+export async function stopSearchScrape(
+  requestId: string
+): Promise<{ requestId: string; stopRequested: boolean }> {
+  const response = await apiPost('/search/scrape/stop', { requestId });
+  const text = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`Stopping scrape failed (${response.status}): ${text}`);
+  }
+
+  try {
+    return JSON.parse(text) as { requestId: string; stopRequested: boolean };
+  } catch {
+    throw new Error('Stopping scrape returned invalid JSON.');
   }
 }

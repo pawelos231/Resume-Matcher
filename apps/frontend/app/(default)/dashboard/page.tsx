@@ -574,7 +574,36 @@ export default function DashboardPage() {
           </Card>
         )}
 
-        {/* 2. Delete Tailored Resumes */}
+        {/* 2. Create Tailored Resume */}
+        <Card className="aspect-square h-full" variant="default">
+          <div className="flex-1 flex flex-col items-center justify-center text-center h-full">
+            <Button
+              onClick={() => router.push('/tailor')}
+              disabled={!isTailorEnabled}
+              className="w-20 h-20 bg-blue-700 text-white border-2 border-black shadow-sw-default hover:bg-blue-800 hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-none transition-all rounded-none"
+            >
+              <Plus className="w-8 h-8" />
+            </Button>
+            <p className="text-xs font-mono mt-4 uppercase text-green-700">
+              {t('dashboard.createResume')}
+            </p>
+          </div>
+        </Card>
+
+        {/* 3. Search */}
+        <Card className="aspect-square h-full" variant="default">
+          <div className="flex-1 flex flex-col items-center justify-center text-center h-full">
+            <Button
+              onClick={() => router.push('/search')}
+              className="w-20 h-20 bg-black text-white border-2 border-black shadow-sw-default hover:bg-gray-900 hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-none transition-all rounded-none"
+            >
+              <SearchIcon className="w-8 h-8" />
+            </Button>
+            <p className="text-xs font-mono mt-4 uppercase text-blue-700">{t('common.search')}</p>
+          </div>
+        </Card>
+
+        {/* 4. Delete Tailored Resumes */}
         {hasTailoredResumes && (
           <Card
             className="aspect-square h-full border-2 border-red-600 bg-red-50"
@@ -601,7 +630,7 @@ export default function DashboardPage() {
           </Card>
         )}
 
-        {/* 3. Tailored Resumes */}
+        {/* 5. Tailored Resumes */}
         {tailoredResumes.map((resume) => {
           const title =
             resume.title || resume.jobSnippet || resume.filename || t('dashboard.tailoredResume');
@@ -676,35 +705,6 @@ export default function DashboardPage() {
             </Card>
           );
         })}
-
-        {/* 4. Create Tailored Resume */}
-        <Card className="aspect-square h-full" variant="default">
-          <div className="flex-1 flex flex-col items-center justify-center text-center h-full">
-            <Button
-              onClick={() => router.push('/tailor')}
-              disabled={!isTailorEnabled}
-              className="w-20 h-20 bg-blue-700 text-white border-2 border-black shadow-sw-default hover:bg-blue-800 hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-none transition-all rounded-none"
-            >
-              <Plus className="w-8 h-8" />
-            </Button>
-            <p className="text-xs font-mono mt-4 uppercase text-green-700">
-              {t('dashboard.createResume')}
-            </p>
-          </div>
-        </Card>
-
-        {/* 5. Search */}
-        <Card className="aspect-square h-full" variant="default">
-          <div className="flex-1 flex flex-col items-center justify-center text-center h-full">
-            <Button
-              onClick={() => router.push('/search')}
-              className="w-20 h-20 bg-black text-white border-2 border-black shadow-sw-default hover:bg-gray-900 hover:translate-y-[2px] hover:translate-x-[2px] hover:shadow-none transition-all rounded-none"
-            >
-              <SearchIcon className="w-8 h-8" />
-            </Button>
-            <p className="text-xs font-mono mt-4 uppercase text-blue-700">{t('common.search')}</p>
-          </div>
-        </Card>
 
         {/* 6. Fillers */}
         {Array.from({ length: fillerCount }).map((_, index) => (

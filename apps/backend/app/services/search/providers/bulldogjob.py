@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import re
@@ -124,50 +125,53 @@ async def scrape_bulldogjob(
     per_page = OFFERS_PER_PAGE
 
     page = 1
-    while page <= page_limit:
-        if target_count is not None and len(offers) >= target_count:
-            break
+    try:
+        while page <= page_limit:
+            if target_count is not None and len(offers) >= target_count:
+                break
 
-        html = await _fetch_listing_page(page)
-        page_props = _extract_next_data(html)
-        if not page_props:
-            raise RuntimeError(f"Bulldogjob page {page} does not contain __NEXT_DATA__")
+            html = await _fetch_listing_page(page)
+            page_props = _extract_next_data(html)
+            if not page_props:
+                raise RuntimeError(f"Bulldogjob page {page} does not contain __NEXT_DATA__")
 
-        jobs = page_props.get("jobs") or []
-        if not isinstance(jobs, list):
-            jobs = []
+            jobs = page_props.get("jobs") or []
+            if not isinstance(jobs, list):
+                jobs = []
 
-        total_count = max(int(page_props.get("totalCount") or len(jobs)), len(jobs))
-        slug_state = page_props.get("slugState") or {}
-        if isinstance(slug_state, dict):
-            per_page = max(int(slug_state.get("perPage") or per_page), 1)
+            total_count = max(int(page_props.get("totalCount") or len(jobs)), len(jobs))
+            slug_state = page_props.get("slugState") or {}
+            if isinstance(slug_state, dict):
+                per_page = max(int(slug_state.get("perPage") or per_page), 1)
 
-        total_pages = max(1, math.ceil(total_count / max(per_page, 1)))
-        if page == 1:
-            desired_pages = (
-                total_pages
-                if target_count is None
-                else max(1, math.ceil(target_count / max(per_page, 1)))
-            )
-            page_limit = min(desired_pages, total_pages, MAX_SCRAPE_PAGES)
+            total_pages = max(1, math.ceil(total_count / max(per_page, 1)))
+            if page == 1:
+                desired_pages = (
+                    total_pages
+                    if target_count is None
+                    else max(1, math.ceil(target_count / max(per_page, 1)))
+                )
+                page_limit = min(desired_pages, total_pages, MAX_SCRAPE_PAGES)
 
-        pages_processed = page
-        if not jobs:
-            break
+            pages_processed = page
+            if not jobs:
+                break
 
-        offers.extend(_normalize_offer(item, index, page) for index, item in enumerate(jobs))
+            offers.extend(_normalize_offer(item, index, page) for index, item in enumerate(jobs))
 
-        if on_progress:
-            progress = (
-                min(page / max(page_limit, 1), 1.0)
-                if target_count is None
-                else min(len(offers) / max(target_count, 1), 1.0)
-            )
-            on_progress({"collected": len(offers), "progress": progress})
+            if on_progress:
+                progress = (
+                    min(page / max(page_limit, 1), 1.0)
+                    if target_count is None
+                    else min(len(offers) / max(target_count, 1), 1.0)
+                )
+                on_progress({"collected": len(offers), "progress": progress})
 
-        if len(jobs) < per_page:
-            break
-        page += 1
+            if len(jobs) < per_page:
+                break
+            page += 1
+    except asyncio.CancelledError:
+        return offers if target_count is None else offers[:target_count]
 
     result = offers if target_count is None else offers[:target_count]
     if on_progress:

@@ -47,6 +47,7 @@ class SearchScrapeMeta(BaseModel):
 
     generatedAt: str
     durationMs: int
+    wasStopped: bool = False
     requestedScrapeBySource: dict[OfferSource, ScrapeTargetLabel]
     scrapedTotalCount: int
     scrapedBySource: dict[OfferSource, int]
@@ -84,6 +85,19 @@ class SearchDoneEvent(BaseModel):
 
     status: int
     payload: SearchScrapeResponse
+
+
+class SearchStopRequest(BaseModel):
+    """Request payload used to stop an active search scrape."""
+
+    requestId: str = Field(..., min_length=1)
+
+
+class SearchStopResponse(BaseModel):
+    """Response payload returned after asking an active scrape to stop."""
+
+    requestId: str
+    stopRequested: bool
 
 
 class SearchGenerateJobDescriptionRequest(BaseModel):

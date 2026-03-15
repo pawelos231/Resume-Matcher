@@ -222,3 +222,74 @@ class TestSearchPipelineDeterminism(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(status, 200)
         self.assertEqual(len(captured_timeouts), len(ALL_SOURCES))
         self.assertTrue(all(timeout == 240 for timeout in captured_timeouts))
+
+    async def test_run_scrape_returns_partial_results_when_stopped(self) -> None:
+        stop_event = asyncio.Event()
+
+        def _make_stoppable_scraper(
+            source: str,
+        ) -> Callable[[int | None, object | None], Awaitable[list[ScrapedOffer]]]:
+            async def _scraper(
+                target_count: int | None,
+                on_progress: object | None = None,
+            ) -> list[ScrapedOffer]:
+                _ = target_count
+                if callable(on_progress):
+                    on_progress({"collected": 1, "progress": 0.5})
+
+                partial = [_offer(source)]
+                try:
+                    await asyncio.sleep(1)
+                except asyncio.CancelledError:
+                    return partial
+
+                return partial
+
+            return _scraper
+
+        async def _trigger_stop() -> None:
+            await asyncio.sleep(0.05)
+            stop_event.set()
+
+        with (
+            patch(
+                "app.services.search.pipeline.scrape_nofluffjobs",
+                new=_make_stoppable_scraper("nofluffjobs"),
+            ),
+            patch(
+                "app.services.search.pipeline.scrape_justjoinit",
+                new=_make_stoppable_scraper("justjoinit"),
+            ),
+            patch(
+                "app.services.search.pipeline.scrape_bulldogjob",
+                new=_make_stoppable_scraper("bulldogjob"),
+            ),
+            patch(
+                "app.services.search.pipeline.scrape_theprotocol",
+                new=_make_stoppable_scraper("theprotocol"),
+            ),
+            patch(
+                "app.services.search.pipeline.scrape_solidjobs",
+                new=_make_stoppable_scraper("solidjobs"),
+            ),
+            patch(
+                "app.services.search.pipeline.scrape_pracujpl",
+                new=_make_stoppable_scraper("pracujpl"),
+            ),
+        ):
+            stop_task = asyncio.create_task(_trigger_stop())
+            try:
+                status, payload = await run_scrape(
+                    {"limit": "1000", "keywords": "title"},
+                    stop_event=stop_event,
+                )
+            finally:
+                await stop_task
+
+        self.assertEqual(status, 200)
+        self.assertTrue(payload["meta"]["wasStopped"])
+        self.assertEqual(payload["meta"]["scrapedTotalCount"], len(ALL_SOURCES))
+        self.assertEqual(
+            [offer["source"] for offer in payload["data"]],
+            ALL_SOURCES,
+        )

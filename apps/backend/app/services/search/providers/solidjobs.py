@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from typing import Any, Callable
 
@@ -158,34 +159,37 @@ async def scrape_solidjobs(
     on_progress: ProgressHandler | None = None,
 ) -> list[ScrapedOffer]:
     """Scrape Solid.jobs offers."""
-    raw_offers = await _fetch_offers()
-    total_offers = len(raw_offers)
     result: list[ScrapedOffer] = []
-    target = total_offers if target_count is None else min(target_count, total_offers)
+    try:
+        raw_offers = await _fetch_offers()
+        total_offers = len(raw_offers)
+        target = total_offers if target_count is None else min(target_count, total_offers)
 
-    if total_offers == 0 or target == 0:
-        if on_progress:
-            on_progress({"collected": 0, "progress": 1.0})
-        return []
-
-    for index, offer in enumerate(raw_offers):
-        if target_count is not None and len(result) >= target_count:
-            break
-        result.append(_normalize_offer(offer, index))
-
-        processed_offers = index + 1
-        if (
-            processed_offers % PROGRESS_BATCH_SIZE == 0
-            or processed_offers == total_offers
-            or len(result) == target
-        ):
+        if total_offers == 0 or target == 0:
             if on_progress:
-                progress = (
-                    min(processed_offers / max(total_offers, 1), 1.0)
-                    if target_count is None
-                    else min(len(result) / max(target_count, 1), 1.0)
-                )
-                on_progress({"collected": len(result), "progress": progress})
+                on_progress({"collected": 0, "progress": 1.0})
+            return []
+
+        for index, offer in enumerate(raw_offers):
+            if target_count is not None and len(result) >= target_count:
+                break
+            result.append(_normalize_offer(offer, index))
+
+            processed_offers = index + 1
+            if (
+                processed_offers % PROGRESS_BATCH_SIZE == 0
+                or processed_offers == total_offers
+                or len(result) == target
+            ):
+                if on_progress:
+                    progress = (
+                        min(processed_offers / max(total_offers, 1), 1.0)
+                        if target_count is None
+                        else min(len(result) / max(target_count, 1), 1.0)
+                    )
+                    on_progress({"collected": len(result), "progress": progress})
+    except asyncio.CancelledError:
+        return result if target_count is None else result[:target_count]
 
     if on_progress:
         on_progress({"collected": len(result), "progress": 1.0})

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import math
 import os
 import re
 import sys
+import threading
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
@@ -34,6 +37,7 @@ REQUEST_USER_AGENT = (
 )
 
 ProgressHandler = Callable[[dict[str, float | int]], None]
+StopRequestedHandler = Callable[[], bool]
 
 _EXTRACTION_SCRIPT = """
 () => {
@@ -171,6 +175,11 @@ def _find_browser_executable() -> str | None:
 async def _launch_browser(playwright: Playwright) -> Browser:
     try:
         return await playwright.chromium.launch(headless=True)
+    except NotImplementedError as exc:
+        raise RuntimeError(
+            "Pracuj.pl scraping could not start Chromium because the current asyncio "
+            "event loop does not support subprocesses."
+        ) from exc
     except PlaywrightError as exc:
         fallback_executable = _find_browser_executable()
         if fallback_executable:
@@ -199,6 +208,10 @@ async def _prepare_context(browser: Browser) -> BrowserContext:
 
     await context.route("**/*", _route_assets)
     return context
+
+
+def _should_stop(stop_requested: StopRequestedHandler | None) -> bool:
+    return stop_requested is not None and stop_requested()
 
 
 async def _load_page(page: Page, page_number: int) -> dict[str, Any]:
@@ -264,110 +277,222 @@ def _normalize_offer(raw_offer: dict[str, Any], index: int) -> ScrapedOffer | No
     )
 
 
+async def _scrape_pracujpl_async(
+    target_count: int | None,
+    on_progress: ProgressHandler | None = None,
+    stop_requested: StopRequestedHandler | None = None,
+) -> list[ScrapedOffer]:
+    """Scrape Pracuj.pl IT offers using the current event loop."""
+    offers: list[ScrapedOffer] = []
+    try:
+        async with async_playwright() as playwright:
+            browser = await _launch_browser(playwright)
+            context = await _prepare_context(browser)
+
+            try:
+                seen_urls: set[str] = set()
+
+                try:
+                    if _should_stop(stop_requested):
+                        return []
+
+                    first_page = await context.new_page()
+                    try:
+                        first_payload = await _load_page(first_page, 1)
+                    finally:
+                        await first_page.close()
+
+                    raw_first_page_offers = first_payload.get("offers")
+                    if not isinstance(raw_first_page_offers, list):
+                        raw_first_page_offers = []
+
+                    extracted_first_page = [
+                        offer
+                        for index, raw_offer in enumerate(raw_first_page_offers)
+                        if isinstance(raw_offer, dict)
+                        for offer in [_normalize_offer(raw_offer, index)]
+                        if offer is not None
+                    ]
+
+                    unique_first_page: list[ScrapedOffer] = []
+                    for offer in extracted_first_page:
+                        key = offer.url or offer.id
+                        if key in seen_urls:
+                            continue
+                        seen_urls.add(key)
+                        unique_first_page.append(offer)
+
+                    offers.extend(unique_first_page)
+                    if target_count is not None and len(offers) >= target_count:
+                        offers = offers[:target_count]
+
+                    total_pages = min(
+                        _parse_max_page(str(first_payload.get("maxPageText") or "1")),
+                        MAX_SCRAPE_PAGES,
+                    )
+                    offers_per_page = max(len(unique_first_page), 1)
+                    page_limit = total_pages
+                    if target_count is not None:
+                        page_limit = min(
+                            total_pages,
+                            max(1, math.ceil(target_count / offers_per_page)),
+                        )
+
+                    if on_progress:
+                        progress = (
+                            min(1 / max(page_limit, 1), 1.0)
+                            if target_count is None
+                            else min(len(offers) / max(target_count, 1), 1.0)
+                        )
+                        on_progress({"collected": len(offers), "progress": progress})
+
+                    if _should_stop(stop_requested):
+                        return offers if target_count is None else offers[:target_count]
+
+                    for page_number in range(2, page_limit + 1):
+                        if target_count is not None and len(offers) >= target_count:
+                            break
+                        if _should_stop(stop_requested):
+                            break
+
+                        page = await context.new_page()
+                        try:
+                            payload = await _load_page(page, page_number)
+                        finally:
+                            await page.close()
+
+                        raw_page_offers = payload.get("offers")
+                        if not isinstance(raw_page_offers, list):
+                            raw_page_offers = []
+
+                        for raw_index, raw_offer in enumerate(raw_page_offers):
+                            if target_count is not None and len(offers) >= target_count:
+                                break
+                            if _should_stop(stop_requested):
+                                break
+                            if not isinstance(raw_offer, dict):
+                                continue
+                            offer = _normalize_offer(
+                                raw_offer,
+                                (page_number - 1) * offers_per_page + raw_index,
+                            )
+                            if offer is None:
+                                continue
+                            key = offer.url or offer.id
+                            if key in seen_urls:
+                                continue
+                            seen_urls.add(key)
+                            offers.append(offer)
+
+                        if on_progress:
+                            progress = (
+                                min(page_number / max(page_limit, 1), 1.0)
+                                if target_count is None
+                                else min(len(offers) / max(target_count, 1), 1.0)
+                            )
+                            on_progress({"collected": len(offers), "progress": progress})
+                except asyncio.CancelledError:
+                    return offers if target_count is None else offers[:target_count]
+
+                result = offers if target_count is None else offers[:target_count]
+                if on_progress:
+                    on_progress({"collected": len(result), "progress": 1.0})
+                return result
+            finally:
+                await context.close()
+                await browser.close()
+    except NotImplementedError as exc:
+        raise RuntimeError(
+            "Pracuj.pl scraping could not start Playwright because the current asyncio "
+            "event loop does not support subprocesses."
+        ) from exc
+
+
+def _run_pracujpl_in_worker_thread(
+    target_count: int | None,
+    on_progress: ProgressHandler | None = None,
+    stop_requested: StopRequestedHandler | None = None,
+) -> list[ScrapedOffer]:
+    if sys.platform == "win32":
+        loop = asyncio.WindowsProactorEventLoopPolicy().new_event_loop()
+    else:
+        loop = asyncio.new_event_loop()
+
+    try:
+        asyncio.set_event_loop(loop)
+        return loop.run_until_complete(
+            _scrape_pracujpl_async(
+                target_count,
+                on_progress=on_progress,
+                stop_requested=stop_requested,
+            )
+        )
+    finally:
+        with contextlib.suppress(Exception):
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
+async def _scrape_pracujpl_via_worker_thread(
+    target_count: int | None,
+    on_progress: ProgressHandler | None = None,
+) -> list[ScrapedOffer]:
+    loop = asyncio.get_running_loop()
+    completion_future: asyncio.Future[list[ScrapedOffer]] = loop.create_future()
+    stop_requested = threading.Event()
+
+    def _set_result(result: list[ScrapedOffer]) -> None:
+        if not completion_future.done():
+            completion_future.set_result(result)
+
+    def _set_exception(exc: BaseException) -> None:
+        if not completion_future.done():
+            completion_future.set_exception(exc)
+
+    def _thread_progress(event: dict[str, float | int]) -> None:
+        if on_progress is None:
+            return
+        loop.call_soon_threadsafe(on_progress, event)
+
+    def _worker() -> None:
+        try:
+            result = _run_pracujpl_in_worker_thread(
+                target_count,
+                on_progress=_thread_progress if on_progress is not None else None,
+                stop_requested=stop_requested.is_set,
+            )
+        except BaseException as exc:
+            loop.call_soon_threadsafe(_set_exception, exc)
+        else:
+            loop.call_soon_threadsafe(_set_result, result)
+
+    worker_thread = threading.Thread(
+        target=_worker,
+        name="pracujpl-scraper",
+        daemon=True,
+    )
+    worker_thread.start()
+
+    try:
+        return await asyncio.shield(completion_future)
+    except asyncio.CancelledError:
+        stop_requested.set()
+        return await asyncio.shield(completion_future)
+
+
 async def scrape_pracujpl(
     target_count: int | None,
     on_progress: ProgressHandler | None = None,
 ) -> list[ScrapedOffer]:
     """Scrape Pracuj.pl IT offers."""
-    async with async_playwright() as playwright:
-        browser = await _launch_browser(playwright)
-        context = await _prepare_context(browser)
+    if sys.platform == "win32":
+        return await _scrape_pracujpl_via_worker_thread(
+            target_count,
+            on_progress=on_progress,
+        )
 
-        try:
-            offers: list[ScrapedOffer] = []
-            seen_urls: set[str] = set()
-
-            first_page = await context.new_page()
-            try:
-                first_payload = await _load_page(first_page, 1)
-            finally:
-                await first_page.close()
-
-            raw_first_page_offers = first_payload.get("offers")
-            if not isinstance(raw_first_page_offers, list):
-                raw_first_page_offers = []
-
-            extracted_first_page = [
-                offer
-                for index, raw_offer in enumerate(raw_first_page_offers)
-                if isinstance(raw_offer, dict)
-                for offer in [_normalize_offer(raw_offer, index)]
-                if offer is not None
-            ]
-
-            unique_first_page: list[ScrapedOffer] = []
-            for offer in extracted_first_page:
-                key = offer.url or offer.id
-                if key in seen_urls:
-                    continue
-                seen_urls.add(key)
-                unique_first_page.append(offer)
-
-            offers.extend(unique_first_page)
-
-            total_pages = min(
-                _parse_max_page(str(first_payload.get("maxPageText") or "1")),
-                MAX_SCRAPE_PAGES,
-            )
-            offers_per_page = max(len(unique_first_page), 1)
-            page_limit = total_pages
-            if target_count is not None:
-                page_limit = min(
-                    total_pages,
-                    max(1, math.ceil(target_count / offers_per_page)),
-                )
-
-            if on_progress:
-                progress = (
-                    min(1 / max(page_limit, 1), 1.0)
-                    if target_count is None
-                    else min(len(offers) / max(target_count, 1), 1.0)
-                )
-                on_progress({"collected": len(offers), "progress": progress})
-
-            for page_number in range(2, page_limit + 1):
-                if target_count is not None and len(offers) >= target_count:
-                    break
-
-                page = await context.new_page()
-                try:
-                    payload = await _load_page(page, page_number)
-                finally:
-                    await page.close()
-
-                raw_page_offers = payload.get("offers")
-                if not isinstance(raw_page_offers, list):
-                    raw_page_offers = []
-
-                for raw_index, raw_offer in enumerate(raw_page_offers):
-                    if target_count is not None and len(offers) >= target_count:
-                        break
-                    if not isinstance(raw_offer, dict):
-                        continue
-                    offer = _normalize_offer(
-                        raw_offer,
-                        (page_number - 1) * offers_per_page + raw_index,
-                    )
-                    if offer is None:
-                        continue
-                    key = offer.url or offer.id
-                    if key in seen_urls:
-                        continue
-                    seen_urls.add(key)
-                    offers.append(offer)
-
-                if on_progress:
-                    progress = (
-                        min(page_number / max(page_limit, 1), 1.0)
-                        if target_count is None
-                        else min(len(offers) / max(target_count, 1), 1.0)
-                    )
-                    on_progress({"collected": len(offers), "progress": progress})
-
-            result = offers if target_count is None else offers[:target_count]
-            if on_progress:
-                on_progress({"collected": len(result), "progress": 1.0})
-            return result
-        finally:
-            await context.close()
-            await browser.close()
+    return await _scrape_pracujpl_async(
+        target_count,
+        on_progress=on_progress,
+    )

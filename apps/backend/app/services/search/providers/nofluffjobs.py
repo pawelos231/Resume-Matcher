@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import math
 import re
@@ -255,40 +256,44 @@ async def scrape_nofluffjobs(
     total_requests = round_limit * len(NO_FLUFF_CATEGORY_SLUGS)
     processed_requests = 0
 
-    for page in range(1, round_limit + 1):
-        for category_slug in NO_FLUFF_CATEGORY_SLUGS:
-            processed_requests += 1
-            response = await fetch_with_timeout(
-                _build_category_page_url(category_slug, page),
-                headers=REQUEST_HEADERS,
-            )
-            if response.status < 200 or response.status >= 300:
-                raise RuntimeError(
-                    f"NoFluffJobs request failed with status {response.status}"
+    try:
+        for page in range(1, round_limit + 1):
+            for category_slug in NO_FLUFF_CATEGORY_SLUGS:
+                processed_requests += 1
+                response = await fetch_with_timeout(
+                    _build_category_page_url(category_slug, page),
+                    headers=REQUEST_HEADERS,
                 )
+                if response.status < 200 or response.status >= 300:
+                    raise RuntimeError(
+                        f"NoFluffJobs request failed with status {response.status}"
+                    )
 
-            postings = _extract_postings_from_html(response.text)
-            for index, posting in enumerate(postings):
-                normalized = _normalize_posting(posting, index, page, category_slug)
-                key = normalized.url or normalized.id
-                if key in seen_offer_keys:
-                    continue
-                seen_offer_keys.add(key)
-                offers_by_category[category_slug].append(normalized)
+                postings = _extract_postings_from_html(response.text)
+                for index, posting in enumerate(postings):
+                    normalized = _normalize_posting(posting, index, page, category_slug)
+                    key = normalized.url or normalized.id
+                    if key in seen_offer_keys:
+                        continue
+                    seen_offer_keys.add(key)
+                    offers_by_category[category_slug].append(normalized)
+
+                total_offers = sum(len(bucket) for bucket in offers_by_category.values())
+
+                if on_progress:
+                    progress = (
+                        min(processed_requests / max(total_requests, 1), 1.0)
+                        if target_count is None
+                        else min(total_offers / max(target_count, 1), 1.0)
+                    )
+                    on_progress({"collected": total_offers, "progress": progress})
 
             total_offers = sum(len(bucket) for bucket in offers_by_category.values())
-
-            if on_progress:
-                progress = (
-                    min(processed_requests / max(total_requests, 1), 1.0)
-                    if target_count is None
-                    else min(total_offers / max(target_count, 1), 1.0)
-                )
-                on_progress({"collected": total_offers, "progress": progress})
-
-        total_offers = sum(len(bucket) for bucket in offers_by_category.values())
-        if target_count is not None and total_offers >= target_count:
-            break
+            if target_count is not None and total_offers >= target_count:
+                break
+    except asyncio.CancelledError:
+        interleaved_offers = _interleave_category_offers(offers_by_category)
+        return interleaved_offers if target_count is None else interleaved_offers[:target_count]
 
     interleaved_offers = _interleave_category_offers(offers_by_category)
     result = interleaved_offers if target_count is None else interleaved_offers[:target_count]

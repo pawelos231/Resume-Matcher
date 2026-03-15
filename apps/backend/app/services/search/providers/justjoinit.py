@@ -202,67 +202,70 @@ async def scrape_justjoinit(
     on_progress: ProgressHandler | None = None,
 ) -> list[ScrapedOffer]:
     """Scrape JustJoinIt offers."""
-    sitemap_index_xml = await _fetch_text(JUST_JOIN_IT_ACTIVE_JOBS_SITEMAP)
-    part_urls = _parse_loc_entries_from_xml(sitemap_index_xml)
-    if not part_urls:
-        raise RuntimeError("JustJoinIT sitemap has no parts")
-
-    all_urls: list[str] = []
-    for part_url in part_urls:
-        part_xml = await _fetch_text(part_url)
-        all_urls.extend(_parse_loc_entries_from_xml(part_xml))
-
-    deduped_urls: list[str] = []
-    seen_urls: set[str] = set()
-    for url in all_urls:
-        if not url.startswith(f"{JUST_JOIN_IT_URL}/job-offer/"):
-            continue
-        if url in seen_urls:
-            continue
-        seen_urls.add(url)
-        deduped_urls.append(url)
-
-    urls_to_process = (
-        deduped_urls[:MAX_URLS_IN_MAX_MODE] if target_count is None else deduped_urls
-    )
-    total_urls = len(urls_to_process)
     offers: list[ScrapedOffer] = []
     seen_offer_urls: set[str] = set()
-    processed_urls = 0
+    try:
+        sitemap_index_xml = await _fetch_text(JUST_JOIN_IT_ACTIVE_JOBS_SITEMAP)
+        part_urls = _parse_loc_entries_from_xml(sitemap_index_xml)
+        if not part_urls:
+            raise RuntimeError("JustJoinIT sitemap has no parts")
 
-    if total_urls == 0:
-        if on_progress:
-            on_progress({"collected": 0, "progress": 1.0})
-        return offers
+        all_urls: list[str] = []
+        for part_url in part_urls:
+            part_xml = await _fetch_text(part_url)
+            all_urls.extend(_parse_loc_entries_from_xml(part_xml))
 
-    for start in range(0, len(urls_to_process), MAX_CONCURRENT_OFFER_REQUESTS):
-        if target_count is not None and len(offers) >= target_count:
-            break
+        deduped_urls: list[str] = []
+        seen_urls: set[str] = set()
+        for url in all_urls:
+            if not url.startswith(f"{JUST_JOIN_IT_URL}/job-offer/"):
+                continue
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+            deduped_urls.append(url)
 
-        batch = urls_to_process[start : start + MAX_CONCURRENT_OFFER_REQUESTS]
-        settled = await asyncio.gather(
-            *[_parse_offer_page(url, start + index) for index, url in enumerate(batch)],
-            return_exceptions=True,
+        urls_to_process = (
+            deduped_urls[:MAX_URLS_IN_MAX_MODE] if target_count is None else deduped_urls
         )
-        processed_urls += len(batch)
+        total_urls = len(urls_to_process)
+        processed_urls = 0
 
-        for result in settled:
-            if isinstance(result, Exception) or result is None:
-                continue
-            if result.url in seen_offer_urls:
-                continue
-            seen_offer_urls.add(result.url)
-            offers.append(result)
+        if total_urls == 0:
+            if on_progress:
+                on_progress({"collected": 0, "progress": 1.0})
+            return offers
+
+        for start in range(0, len(urls_to_process), MAX_CONCURRENT_OFFER_REQUESTS):
             if target_count is not None and len(offers) >= target_count:
                 break
 
-        if on_progress:
-            progress = (
-                min(processed_urls / max(total_urls, 1), 1.0)
-                if target_count is None
-                else min(len(offers) / max(target_count, 1), 1.0)
+            batch = urls_to_process[start : start + MAX_CONCURRENT_OFFER_REQUESTS]
+            settled = await asyncio.gather(
+                *[_parse_offer_page(url, start + index) for index, url in enumerate(batch)],
+                return_exceptions=True,
             )
-            on_progress({"collected": len(offers), "progress": progress})
+            processed_urls += len(batch)
+
+            for result in settled:
+                if isinstance(result, Exception) or result is None:
+                    continue
+                if result.url in seen_offer_urls:
+                    continue
+                seen_offer_urls.add(result.url)
+                offers.append(result)
+                if target_count is not None and len(offers) >= target_count:
+                    break
+
+            if on_progress:
+                progress = (
+                    min(processed_urls / max(total_urls, 1), 1.0)
+                    if target_count is None
+                    else min(len(offers) / max(target_count, 1), 1.0)
+                )
+                on_progress({"collected": len(offers), "progress": progress})
+    except asyncio.CancelledError:
+        return offers if target_count is None else offers[:target_count]
 
     result = offers if target_count is None else offers[:target_count]
     if on_progress:

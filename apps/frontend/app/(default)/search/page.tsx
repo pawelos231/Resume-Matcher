@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardDescription, CardTitle } from '@/components/ui/card';
@@ -10,6 +10,7 @@ import {
   buildSearchScrapeUrl,
   fetchSearchScrape,
   generateJobDescriptionFromSearchOffer,
+  stopSearchScrape,
   type OfferSortBy,
   type OfferSortDirection,
   type OfferSource,
@@ -33,8 +34,8 @@ import {
 import Loader2 from 'lucide-react/dist/esm/icons/loader-2';
 import ArrowLeft from 'lucide-react/dist/esm/icons/arrow-left';
 import SearchIcon from 'lucide-react/dist/esm/icons/search';
-import ExternalLink from 'lucide-react/dist/esm/icons/external-link';
 import AlertTriangle from 'lucide-react/dist/esm/icons/alert-triangle';
+import ExternalLink from 'lucide-react/dist/esm/icons/external-link';
 
 type BulkGenerationProgress = {
   total: number;
@@ -76,6 +77,9 @@ const EMPTY_SCRAPED_BY_SOURCE: Record<OfferSource, number> = {
 
 const MIN_SCRAPE_TIMEOUT_SECONDS = 15;
 const MAX_SCRAPE_TIMEOUT_SECONDS = 600;
+const PAGE_SIZE_OPTIONS = [25, 50, 100, 'max'] as const;
+
+type PageSizeOption = (typeof PAGE_SIZE_OPTIONS)[number];
 
 function parseScrapeTimeoutSeconds(value: string): number | undefined {
   const trimmed = value.trim();
@@ -211,8 +215,18 @@ function formatElapsedDuration(elapsedMs: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
+function createScrapeRequestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  return `scrape-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export default function SearchPage() {
   const router = useRouter();
+  const activeEventSourceRef = useRef<{ close: () => void } | null>(null);
+  const activeScrapeRequestIdRef = useRef<string | null>(null);
 
   const [limit, setLimit] = useState<number>(1000);
   const [keywords, setKeywords] = useState<string>('react,node,typescript');
@@ -225,8 +239,11 @@ export default function SearchPage() {
     useState<Record<OfferSource, string>>(DEFAULT_SOURCE_LIMITS);
   const [tableSearchText, setTableSearchText] = useState<string>('');
   const [hideAppliedOffers, setHideAppliedOffers] = useState<boolean>(false);
+  const [pageSize, setPageSize] = useState<PageSizeOption>(50);
+  const [currentPage, setCurrentPage] = useState<number>(1);
 
   const [loading, setLoading] = useState<boolean>(false);
+  const [isStoppingScrape, setIsStoppingScrape] = useState<boolean>(false);
   const [isBulkGenerating, setIsBulkGenerating] = useState<boolean>(false);
   const [bulkProgress, setBulkProgress] = useState<BulkGenerationProgress | null>(null);
   const [generatingEditOfferKey, setGeneratingEditOfferKey] = useState<string | null>(null);
@@ -240,8 +257,10 @@ export default function SearchPage() {
   const [progressBySource, setProgressBySource] = useState<Record<OfferSource, number>>({
     ...EMPTY_SCRAPED_BY_SOURCE,
   });
+  const [activeScrapeRequestId, setActiveScrapeRequestId] = useState<string | null>(null);
   const [requestStartedAt, setRequestStartedAt] = useState<number | null>(null);
   const [elapsedRequestMs, setElapsedRequestMs] = useState<number>(0);
+  const deferredTableSearchText = useDeferredValue(tableSearchText);
 
   useEffect(() => {
     setOfferResumeMap(readOfferResumeMap());
@@ -260,6 +279,21 @@ export default function SearchPage() {
 
     return () => window.clearInterval(intervalId);
   }, [loading, requestStartedAt]);
+
+  useEffect(() => {
+    return () => {
+      const activeEventSource = activeEventSourceRef.current as { close: () => void } | null;
+      if (activeEventSource !== null) {
+        activeEventSource.close();
+      }
+      activeEventSourceRef.current = null;
+
+      const requestId = activeScrapeRequestIdRef.current;
+      if (requestId) {
+        void stopSearchScrape(requestId).catch(() => undefined);
+      }
+    };
+  }, []);
 
   const sortedOffers = useMemo(
     () => sortOffers(response?.data ?? [], sortBy, sortDirection),
@@ -282,11 +316,65 @@ export default function SearchPage() {
   }, [response, offerResumeMap]);
 
   const displayedOffers = useMemo(
-    () => filterOffers(statusFilteredOffers, tableSearchText),
-    [statusFilteredOffers, tableSearchText]
+    () => filterOffers(statusFilteredOffers, deferredTableSearchText),
+    [statusFilteredOffers, deferredTableSearchText]
   );
 
-  const buildScrapeParams = (): SearchScrapeParams => ({
+  const bulkGenerationOffers = useMemo(
+    () => displayedOffers.filter((offer) => !offerResumeMap[getOfferRuntimeKey(offer)]),
+    [displayedOffers, offerResumeMap]
+  );
+
+  const totalPages = useMemo(() => {
+    if (pageSize === 'max') {
+      return 1;
+    }
+
+    return Math.max(1, Math.ceil(displayedOffers.length / pageSize));
+  }, [displayedOffers.length, pageSize]);
+
+  const pagedOffers = useMemo(() => {
+    if (pageSize === 'max') {
+      return displayedOffers;
+    }
+
+    const startIndex = (currentPage - 1) * pageSize;
+    return displayedOffers.slice(startIndex, startIndex + pageSize);
+  }, [currentPage, displayedOffers, pageSize]);
+
+  const pageRangeStart = useMemo(() => {
+    if (displayedOffers.length === 0) {
+      return 0;
+    }
+
+    if (pageSize === 'max') {
+      return 1;
+    }
+
+    return (currentPage - 1) * pageSize + 1;
+  }, [currentPage, displayedOffers.length, pageSize]);
+
+  const pageRangeEnd = useMemo(() => {
+    if (displayedOffers.length === 0) {
+      return 0;
+    }
+
+    if (pageSize === 'max') {
+      return displayedOffers.length;
+    }
+
+    return Math.min(displayedOffers.length, currentPage * pageSize);
+  }, [currentPage, displayedOffers.length, pageSize]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [deferredTableSearchText, hideAppliedOffers, pageSize, response, sortBy, sortDirection]);
+
+  useEffect(() => {
+    setCurrentPage((previousPage) => Math.min(previousPage, totalPages));
+  }, [totalPages]);
+
+  const buildScrapeParams = (requestId?: string): SearchScrapeParams => ({
     limit,
     keywords,
     keywordMode,
@@ -294,18 +382,53 @@ export default function SearchPage() {
     sortBy,
     sortDirection,
     sourceLimits,
+    requestId,
     timeoutSeconds: parseScrapeTimeoutSeconds(scrapeTimeoutSeconds),
   });
 
-  const runScrapeFallback = async (): Promise<void> => {
-    const fallback = await fetchSearchScrape(buildScrapeParams());
+  const runScrapeFallback = async (requestId: string): Promise<void> => {
+    const fallback = await fetchSearchScrape(buildScrapeParams(requestId));
 
     setResponse(fallback.payload);
     setProgressPercent(100);
-    setProgressMessage('Scraping completed');
+    setProgressMessage(
+      fallback.payload.meta.wasStopped
+        ? 'Scraping stopped. Returned partial results.'
+        : 'Scraping completed'
+    );
     setProgressBySource(fallback.payload.meta.scrapedBySource);
+    if (fallback.payload.meta.wasStopped) {
+      setNotice('Scraping stopped. Returned partial results.');
+    }
     if (fallback.status >= 400) {
       setError('Scrape finished with source errors.');
+    }
+  };
+
+  const handleStopScraping = async (): Promise<void> => {
+    const requestId = activeScrapeRequestIdRef.current;
+    if (!loading || !requestId || isStoppingScrape) {
+      return;
+    }
+
+    setError(null);
+    setNotice('Stopping scrape. Waiting for partial results...');
+    setProgressMessage('Stopping scrape and returning partial results...');
+    setIsStoppingScrape(true);
+
+    try {
+      const result = await stopSearchScrape(requestId);
+      if (!result.stopRequested) {
+        setIsStoppingScrape(false);
+        setNotice(null);
+        setError('Could not stop the active scrape. Try again in a moment.');
+      }
+    } catch (stopError) {
+      setIsStoppingScrape(false);
+      setNotice(null);
+      setError(
+        stopError instanceof Error ? stopError.message : 'Could not stop the active scrape.'
+      );
     }
   };
 
@@ -403,8 +526,14 @@ export default function SearchPage() {
   };
 
   const handleGenerateResumeForAll = async (): Promise<void> => {
-    if (!response?.data?.length) {
+    if (!displayedOffers.length) {
       setError('No offers available for bulk generation.');
+      return;
+    }
+
+    if (!bulkGenerationOffers.length) {
+      setNotice('All filtered offers already have generated resumes.');
+      setError(null);
       return;
     }
 
@@ -423,7 +552,7 @@ export default function SearchPage() {
       return;
     }
 
-    const offersToProcess = response.data;
+    const offersToProcess = bulkGenerationOffers;
     let processed = 0;
     let success = 0;
     let failed = 0;
@@ -494,7 +623,14 @@ export default function SearchPage() {
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const startedAt = Date.now();
+    const requestId = createScrapeRequestId();
+
+    activeEventSourceRef.current?.close();
+    activeEventSourceRef.current = null;
+    activeScrapeRequestIdRef.current = requestId;
+
     setLoading(true);
+    setIsStoppingScrape(false);
     setIsBulkGenerating(false);
     setBulkProgress(null);
     setNotice(null);
@@ -503,19 +639,21 @@ export default function SearchPage() {
     setProgressPercent(0);
     setProgressMessage('Starting scrape...');
     setProgressBySource({ ...EMPTY_SCRAPED_BY_SOURCE });
+    setActiveScrapeRequestId(requestId);
     setRequestStartedAt(startedAt);
     setElapsedRequestMs(0);
 
     try {
       if (typeof EventSource === 'undefined') {
-        await runScrapeFallback();
+        await runScrapeFallback(requestId);
         return;
       }
 
       await new Promise<void>((resolve, reject) => {
         let completed = false;
-        const streamUrl = buildSearchScrapeUrl(buildScrapeParams(), true);
+        const streamUrl = buildSearchScrapeUrl(buildScrapeParams(requestId), true);
         const eventSource = new EventSource(streamUrl);
+        activeEventSourceRef.current = eventSource;
 
         eventSource.addEventListener('progress', (rawEvent) => {
           try {
@@ -533,13 +671,23 @@ export default function SearchPage() {
         eventSource.addEventListener('done', (rawEvent) => {
           completed = true;
           eventSource.close();
+          if (activeEventSourceRef.current === eventSource) {
+            activeEventSourceRef.current = null;
+          }
 
           try {
             const done = JSON.parse((rawEvent as MessageEvent).data) as SearchDoneEvent;
             setResponse(done.payload);
             setProgressPercent(100);
-            setProgressMessage('Scraping completed');
+            setProgressMessage(
+              done.payload.meta.wasStopped
+                ? 'Scraping stopped. Returned partial results.'
+                : 'Scraping completed'
+            );
             setProgressBySource(done.payload.meta.scrapedBySource);
+            if (done.payload.meta.wasStopped) {
+              setNotice('Scraping stopped. Returned partial results.');
+            }
             if (done.status >= 400) {
               setError('Scrape finished with source errors.');
             }
@@ -554,6 +702,9 @@ export default function SearchPage() {
             return;
           }
           eventSource.close();
+          if (activeEventSourceRef.current === eventSource) {
+            activeEventSourceRef.current = null;
+          }
           reject(new Error('Could not connect to scrape stream.'));
         });
       });
@@ -561,6 +712,14 @@ export default function SearchPage() {
       setError(scrapeError instanceof Error ? scrapeError.message : 'Could not fetch offers.');
     } finally {
       setElapsedRequestMs(Date.now() - startedAt);
+      const activeEventSource = activeEventSourceRef.current as { close: () => void } | null;
+      if (activeEventSource !== null) {
+        activeEventSource.close();
+      }
+      activeEventSourceRef.current = null;
+      activeScrapeRequestIdRef.current = null;
+      setActiveScrapeRequestId(null);
+      setIsStoppingScrape(false);
       setLoading(false);
     }
   };
@@ -736,6 +895,24 @@ export default function SearchPage() {
                   </>
                 )}
               </Button>
+              {loading && (
+                <Button
+                  type="button"
+                  variant="warning"
+                  onClick={() => void handleStopScraping()}
+                  disabled={isStoppingScrape || !activeScrapeRequestId}
+                  className="min-w-[180px]"
+                >
+                  {isStoppingScrape ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Stopping
+                    </>
+                  ) : (
+                    'Stop Scrape'
+                  )}
+                </Button>
+              )}
             </div>
           </form>
         </Card>
@@ -803,6 +980,11 @@ export default function SearchPage() {
                   Duration: {response.meta.durationMs}ms
                 </p>
               </div>
+              {response.meta.wasStopped && (
+                <p className="mt-3 font-mono text-[11px] uppercase tracking-wider text-[#C2410C]">
+                  Result type: partial (stopped by user)
+                </p>
+              )}
               <div className="mt-4 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
                 {SOURCE_CONFIG.map((source) => (
                   <p
@@ -824,7 +1006,7 @@ export default function SearchPage() {
                   disabled={
                     isBulkGenerating ||
                     Boolean(generatingOfferKey || generatingEditOfferKey) ||
-                    response.data.length === 0
+                    bulkGenerationOffers.length === 0
                   }
                 >
                   {isBulkGenerating ? (
@@ -833,7 +1015,7 @@ export default function SearchPage() {
                       Generating All Resumes
                     </>
                   ) : (
-                    'Generate Resume For All Results'
+                    `Generate Resume For All Filtered Results (${bulkGenerationOffers.length})`
                   )}
                 </Button>
                 {bulkProgress && (
@@ -849,29 +1031,86 @@ export default function SearchPage() {
             </Card>
 
             <Card className="border-2 border-black bg-white shadow-[6px_6px_0px_0px_#000000]">
-              <label className="space-y-1">
-                <span className="font-mono text-xs uppercase tracking-wider text-black">
-                  Search in current table
-                </span>
-                <Input
-                  type="text"
-                  value={tableSearchText}
-                  onChange={(event) => setTableSearchText(event.target.value)}
-                  placeholder='np. "react warszawa"'
-                />
-              </label>
-              <label className="mt-3 flex items-center gap-2 font-mono text-xs uppercase tracking-wider text-black">
-                <input
-                  type="checkbox"
-                  checked={hideAppliedOffers}
-                  onChange={(event) => setHideAppliedOffers(event.target.checked)}
-                  className="h-4 w-4 rounded-none border border-black"
-                />
-                Hide offers with generated resume ({appliedOffersCount})
-              </label>
-              <p className="mt-2 font-mono text-[11px] uppercase tracking-wider text-[#4B5563]">
-                Visible offers: {displayedOffers.length}/{response.data.length}
-              </p>
+              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
+                <label className="space-y-1">
+                  <span className="font-mono text-xs uppercase tracking-wider text-black">
+                    Search in current table
+                  </span>
+                  <Input
+                    type="text"
+                    value={tableSearchText}
+                    onChange={(event) => setTableSearchText(event.target.value)}
+                    placeholder='np. "react warszawa"'
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="font-mono text-xs uppercase tracking-wider text-black">
+                    Page size
+                  </span>
+                  <select
+                    className="h-10 w-full rounded-none border border-black bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-700"
+                    value={String(pageSize)}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setPageSize(
+                        value === 'max' ? 'max' : (Number.parseInt(value, 10) as PageSizeOption)
+                      );
+                    }}
+                  >
+                    {PAGE_SIZE_OPTIONS.map((option) => (
+                      <option key={String(option)} value={String(option)}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <label className="flex items-center gap-2 font-mono text-xs uppercase tracking-wider text-black">
+                  <input
+                    type="checkbox"
+                    checked={hideAppliedOffers}
+                    onChange={(event) => setHideAppliedOffers(event.target.checked)}
+                    className="h-4 w-4 rounded-none border border-black"
+                  />
+                  Hide offers with generated resume ({appliedOffersCount})
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setCurrentPage((previousPage) => Math.max(1, previousPage - 1))}
+                    disabled={currentPage <= 1 || totalPages <= 1}
+                  >
+                    Previous
+                  </Button>
+                  <p className="font-mono text-[11px] uppercase tracking-wider text-[#4B5563]">
+                    Page {displayedOffers.length === 0 ? 0 : currentPage}/
+                    {displayedOffers.length === 0 ? 0 : totalPages}
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setCurrentPage((previousPage) => Math.min(totalPages, previousPage + 1))
+                    }
+                    disabled={currentPage >= totalPages || totalPages <= 1}
+                  >
+                    Next
+                  </Button>
+                </div>
+              </div>
+              <div className="mt-2 flex flex-col gap-1 font-mono text-[11px] uppercase tracking-wider text-[#4B5563] md:flex-row md:items-center md:justify-between">
+                <p>
+                  Visible offers: {displayedOffers.length}/{response.data.length}
+                </p>
+                <p>
+                  Showing: {pageRangeStart}-{pageRangeEnd} | Ready for bulk generation:{' '}
+                  {bulkGenerationOffers.length}
+                </p>
+              </div>
             </Card>
 
             {response.errors.length > 0 && (
@@ -892,95 +1131,137 @@ export default function SearchPage() {
               </Card>
             )}
 
-            <div className="space-y-3">
-              {displayedOffers.map((offer) => {
-                const runtimeKey = getOfferRuntimeKey(offer);
-                const alreadyApplied = Boolean(offerResumeMap[runtimeKey]);
+            {displayedOffers.length === 0 ? (
+              <Card className="border-2 border-black bg-white shadow-[6px_6px_0px_0px_#000000]">
+                <p className="font-mono text-xs uppercase tracking-wider text-[#4B5563]">
+                  No offers match current filters.
+                </p>
+              </Card>
+            ) : (
+              <div className="space-y-3">
+                {pagedOffers.map((offer) => {
+                  const runtimeKey = getOfferRuntimeKey(offer);
+                  const alreadyApplied = Boolean(offerResumeMap[runtimeKey]);
 
-                return (
-                  <Card
-                    key={`${offer.source}-${offer.id}-${offer.url}`}
-                    className="border-2 border-black bg-white shadow-[4px_4px_0px_0px_#000000]"
-                  >
-                    <div className={`relative space-y-2 ${alreadyApplied ? 'pt-6' : ''}`}>
-                      {alreadyApplied && (
-                        <span className="absolute right-0 top-0 border border-black bg-[#15803D] px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-white">
-                          Already Applied
-                        </span>
-                      )}
-                      <p className="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8]">
-                        {offer.source}
-                      </p>
-                      <h3 className="font-serif text-2xl leading-tight">{offer.title}</h3>
-                      <p className="font-sans text-sm text-[#4B5563]">
-                        {offer.company}
-                        {offer.location ? ` - ${offer.location}` : ''}
-                      </p>
-                      {offer.salary && (
-                        <p className="font-mono text-xs uppercase tracking-wider text-[#15803D]">
-                          {offer.salary}
-                        </p>
-                      )}
-                      {offer.skills.length > 0 && (
-                        <p className="font-sans text-sm text-[#4B5563]">
-                          Skills: {offer.skills.join(', ')}
-                        </p>
-                      )}
-                      {offer.matchedKeywords.length > 0 && (
+                  return (
+                    <Card
+                      key={`${offer.source}-${offer.id}-${offer.url}`}
+                      className="border-2 border-black bg-white shadow-[4px_4px_0px_0px_#000000]"
+                    >
+                      <div className={`relative space-y-2 ${alreadyApplied ? 'pt-6' : ''}`}>
+                        {alreadyApplied && (
+                          <span className="absolute right-0 top-0 border border-black bg-[#15803D] px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-white">
+                            Already Applied
+                          </span>
+                        )}
                         <p className="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8]">
-                          Match: {offer.matchedKeywords.join(', ')}
+                          {offer.source}
                         </p>
-                      )}
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => void handleGenerateAndEditResumeFromOffer(offer)}
-                          disabled={Boolean(
-                            isBulkGenerating || generatingOfferKey || generatingEditOfferKey
-                          )}
-                        >
-                          {generatingEditOfferKey === runtimeKey ? (
-                            <>
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              Preparing Editor
-                            </>
-                          ) : (
-                            'Generate And Edit Resume'
-                          )}
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          onClick={() => void handleGenerateResumeFromOffer(offer)}
-                          disabled={Boolean(
-                            isBulkGenerating || generatingOfferKey || generatingEditOfferKey
-                          )}
-                        >
-                          {generatingOfferKey === runtimeKey ? (
-                            <>
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                              Generating Resume
-                            </>
-                          ) : (
-                            'Generate Resume'
-                          )}
-                        </Button>
-                        <a
-                          href={offer.url}
-                          target="_blank"
-                          rel="noreferrer noopener"
-                          className="inline-flex items-center gap-2 border border-black bg-[#1D4ED8] px-3 py-1 font-mono text-[11px] uppercase tracking-wider text-white shadow-[2px_2px_0px_0px_#000000] transition-all hover:translate-y-[1px] hover:translate-x-[1px] hover:shadow-none"
-                        >
-                          Open Offer
-                          <ExternalLink className="h-3.5 w-3.5" />
-                        </a>
+                        <h3 className="font-serif text-2xl leading-tight">{offer.title}</h3>
+                        <p className="font-sans text-sm text-[#4B5563]">
+                          {offer.company}
+                          {offer.location ? ` - ${offer.location}` : ''}
+                        </p>
+                        {offer.salary && (
+                          <p className="font-mono text-xs uppercase tracking-wider text-[#15803D]">
+                            {offer.salary}
+                          </p>
+                        )}
+                        {offer.skills.length > 0 && (
+                          <p className="font-sans text-sm text-[#4B5563]">
+                            Skills: {offer.skills.join(', ')}
+                          </p>
+                        )}
+                        {offer.matchedKeywords.length > 0 && (
+                          <p className="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8]">
+                            Match: {offer.matchedKeywords.join(', ')}
+                          </p>
+                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => void handleGenerateAndEditResumeFromOffer(offer)}
+                            disabled={Boolean(
+                              isBulkGenerating || generatingOfferKey || generatingEditOfferKey
+                            )}
+                          >
+                            {generatingEditOfferKey === runtimeKey ? (
+                              <>
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Preparing Editor
+                              </>
+                            ) : (
+                              'Generate And Edit Resume'
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => void handleGenerateResumeFromOffer(offer)}
+                            disabled={Boolean(
+                              isBulkGenerating || generatingOfferKey || generatingEditOfferKey
+                            )}
+                          >
+                            {generatingOfferKey === runtimeKey ? (
+                              <>
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Generating Resume
+                              </>
+                            ) : (
+                              'Generate Resume'
+                            )}
+                          </Button>
+                          <a
+                            href={offer.url}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            className="inline-flex items-center gap-2 border border-black bg-[#1D4ED8] px-3 py-1 font-mono text-[11px] uppercase tracking-wider text-white shadow-[2px_2px_0px_0px_#000000] transition-all hover:translate-y-[1px] hover:translate-x-[1px] hover:shadow-none"
+                          >
+                            Open Offer
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
+                        </div>
                       </div>
-                    </div>
-                  </Card>
-                );
-              })}
-            </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+
+            {displayedOffers.length > 0 && totalPages > 1 && (
+              <Card className="border-2 border-black bg-white shadow-[6px_6px_0px_0px_#000000]">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <p className="font-mono text-[11px] uppercase tracking-wider text-[#4B5563]">
+                    Page {currentPage}/{totalPages} | Showing {pageRangeStart}-{pageRangeEnd}
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setCurrentPage((previousPage) => Math.max(1, previousPage - 1))
+                      }
+                      disabled={currentPage <= 1}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        setCurrentPage((previousPage) => Math.min(totalPages, previousPage + 1))
+                      }
+                      disabled={currentPage >= totalPages}
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              </Card>
+            )}
           </>
         )}
       </div>
