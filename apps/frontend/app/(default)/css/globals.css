@@ -186,9 +186,11 @@
 :root[data-site-theme='black'] [class*='bg-[#D8D8D2]'],
 :root[data-site-theme='black'] [class*='bg-[#CFCFC7]'],
 :root[data-site-theme='black'] [class*='bg-[#E0E0D8]'],
+:root[data-site-theme='black'] [class*='bg-gray-50'],
 :root[data-site-theme='black'] [class*='bg-white'],
 :root[data-site-theme='black'] [class*='bg-white/60'],
 :root[data-site-theme='black'] [class*='bg-gray-100'],
+:root[data-site-theme='black'] [class*='bg-gray-200'],
 :root[data-site-theme='black'] [class*='bg-black'] {
   background-color: var(--card) !important;
 }
@@ -227,6 +229,11 @@
 }
 
 :root[data-site-theme='black'] [class*='hover:bg-gray-900']:hover {
+  background-color: var(--secondary) !important;
+}
+
+:root[data-site-theme='black'] [class*='hover:bg-gray-200']:hover,
+:root[data-site-theme='black'] [class*='hover:bg-gray-100']:hover {
   background-color: var(--secondary) !important;
 }
 
