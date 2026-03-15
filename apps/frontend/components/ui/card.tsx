@@ -11,14 +11,14 @@ const Card = React.forwardRef<HTMLDivElement, CardProps>(
     const baseStyles = 'rounded-none flex flex-col relative overflow-hidden';
 
     const variants = {
-      default: 'bg-canvas',
+      default: 'bg-card',
       interactive: cn(
-        'bg-canvas border-2 border-transparent', // Initial state
+        'bg-card border-2 border-transparent', // Initial state
         'transition-all duration-200 ease-in-out',
         'cursor-pointer group',
         'hover:z-20 hover:border-ink hover:shadow-sw-default hover:-translate-y-[2px] hover:-translate-x-[2px]'
       ),
-      outline: 'bg-canvas border-2 border-ink',
+      outline: 'bg-card border-2 border-ink',
       ghost: 'bg-transparent border-none shadow-none',
     };
 
@@ -60,7 +60,7 @@ const CardDescription = React.forwardRef<
   HTMLParagraphElement,
   React.HTMLAttributes<HTMLParagraphElement>
 >(({ className, ...props }, ref) => (
-  <p ref={ref} className={cn('text-sm text-gray-500 font-mono', className)} {...props} />
+  <p ref={ref} className={cn('text-sm text-muted-foreground font-mono', className)} {...props} />
 ));
 CardDescription.displayName = 'CardDescription';
 

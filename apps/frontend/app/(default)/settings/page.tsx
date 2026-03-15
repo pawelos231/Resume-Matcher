@@ -23,6 +23,7 @@ import { API_URL } from '@/lib/api/client';
 import { getVersionString } from '@/lib/config/version';
 import { ToggleSwitch } from '@/components/ui/toggle-switch';
 import { useStatusCache } from '@/lib/context/status-cache';
+import { useTheme } from '@/lib/context/theme-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -47,6 +48,7 @@ import {
   Globe,
   Trash2,
   AlertTriangle,
+  PaintBucket,
 } from 'lucide-react';
 import { useLanguage } from '@/lib/context/language-context';
 import { useTranslations } from '@/lib/i18n';
@@ -141,10 +143,12 @@ export default function SettingsPage() {
     supportedLanguages,
     isLoading: languageLoading,
   } = useLanguage();
+  const { theme, toggleTheme } = useTheme();
 
   // Translations
   const { t } = useTranslations();
   const providerInfo = PROVIDER_INFO[provider] ?? PROVIDER_INFO['openai'];
+  const isBlackTheme = theme === 'black';
   const fallbackPromptOptions = useMemo<PromptOption[]>(
     () => [
       {
@@ -503,8 +507,9 @@ export default function SettingsPage() {
     <div
       className="flex flex-col items-center justify-start p-6 md:p-12 min-h-screen overflow-y-auto"
       style={{
-        backgroundImage:
-          'linear-gradient(rgba(29, 78, 216, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(29, 78, 216, 0.05) 1px, transparent 1px)',
+        backgroundImage: isBlackTheme
+          ? 'linear-gradient(rgba(255, 255, 255, 0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.08) 1px, transparent 1px)'
+          : 'linear-gradient(rgba(29, 78, 216, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(29, 78, 216, 0.05) 1px, transparent 1px)',
         backgroundSize: '40px 40px',
       }}
     >
@@ -1010,6 +1015,33 @@ export default function SettingsPage() {
                   ))}
                 </div>
               </div>
+            </div>
+          </section>
+
+          {/* Theme Section */}
+          <section className="space-y-6">
+            <div className="flex items-center gap-2 border-b border-black/10 pb-2">
+              <PaintBucket className="w-4 h-4" />
+              <h2 className="font-mono text-sm font-bold uppercase tracking-wider">
+                {t('settings.theme')}
+              </h2>
+            </div>
+
+            <div className="border border-black bg-white p-6 shadow-[2px_2px_0px_0px_rgba(0,0,0,0.1)] space-y-4">
+              <div>
+                <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-gray-700 mb-2">
+                  {isBlackTheme ? t('settings.darkMode') : t('settings.lightMode')}
+                </h3>
+                <p className="text-sm text-gray-600">{t('settings.themeDescription')}</p>
+              </div>
+              <Button
+                type="button"
+                variant={isBlackTheme ? 'secondary' : 'default'}
+                onClick={toggleTheme}
+                className="w-full md:w-auto"
+              >
+                {isBlackTheme ? t('settings.lightMode') : t('settings.darkMode')}
+              </Button>
             </div>
           </section>
 

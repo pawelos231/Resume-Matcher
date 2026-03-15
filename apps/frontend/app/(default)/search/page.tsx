@@ -16,6 +16,7 @@ import {
   type SearchDoneEvent,
   type SearchOffer,
   type SearchProgressEvent,
+  type SearchScrapeParams,
   type SearchScrapeResponse,
 } from '@/lib/api/search';
 import { improveResume, uploadJobDescriptions } from '@/lib/api/resume';
@@ -52,6 +53,7 @@ const SOURCE_CONFIG: Array<{
   { key: 'bulldogjob', label: 'Bulldogjob' },
   { key: 'theprotocol', label: 'theprotocol.it' },
   { key: 'solidjobs', label: 'Solid.jobs' },
+  { key: 'pracujpl', label: 'Pracuj.pl' },
 ];
 
 const DEFAULT_SOURCE_LIMITS: Record<OfferSource, string> = {
@@ -60,6 +62,7 @@ const DEFAULT_SOURCE_LIMITS: Record<OfferSource, string> = {
   bulldogjob: 'max',
   theprotocol: 'max',
   solidjobs: 'max',
+  pracujpl: '50',
 };
 
 const EMPTY_SCRAPED_BY_SOURCE: Record<OfferSource, number> = {
@@ -68,7 +71,25 @@ const EMPTY_SCRAPED_BY_SOURCE: Record<OfferSource, number> = {
   bulldogjob: 0,
   theprotocol: 0,
   solidjobs: 0,
+  pracujpl: 0,
 };
+
+const MIN_SCRAPE_TIMEOUT_SECONDS = 15;
+const MAX_SCRAPE_TIMEOUT_SECONDS = 600;
+
+function parseScrapeTimeoutSeconds(value: string): number | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return undefined;
+  }
+
+  return Math.min(MAX_SCRAPE_TIMEOUT_SECONDS, Math.max(MIN_SCRAPE_TIMEOUT_SECONDS, parsed));
+}
 
 function filterOffers(offers: SearchOffer[], searchText: string): SearchOffer[] {
   const normalized = searchText.trim().toLowerCase();
@@ -173,6 +194,23 @@ function sortOffers(
   });
 }
 
+function formatSourceScrapeCount(scraped: number, requested: number | 'max'): string {
+  return requested === 'max' ? `${scraped} / max` : `${scraped} / ${requested}`;
+}
+
+function formatElapsedDuration(elapsedMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
 export default function SearchPage() {
   const router = useRouter();
 
@@ -182,6 +220,7 @@ export default function SearchPage() {
   const [salaryRangeOnly, setSalaryRangeOnly] = useState<boolean>(false);
   const [sortBy, setSortBy] = useState<OfferSortBy>('relevance');
   const [sortDirection, setSortDirection] = useState<OfferSortDirection>('asc');
+  const [scrapeTimeoutSeconds, setScrapeTimeoutSeconds] = useState<string>('180');
   const [sourceLimits, setSourceLimits] =
     useState<Record<OfferSource, string>>(DEFAULT_SOURCE_LIMITS);
   const [tableSearchText, setTableSearchText] = useState<string>('');
@@ -201,10 +240,26 @@ export default function SearchPage() {
   const [progressBySource, setProgressBySource] = useState<Record<OfferSource, number>>({
     ...EMPTY_SCRAPED_BY_SOURCE,
   });
+  const [requestStartedAt, setRequestStartedAt] = useState<number | null>(null);
+  const [elapsedRequestMs, setElapsedRequestMs] = useState<number>(0);
 
   useEffect(() => {
     setOfferResumeMap(readOfferResumeMap());
   }, []);
+
+  useEffect(() => {
+    if (!loading || requestStartedAt === null) {
+      return;
+    }
+
+    setElapsedRequestMs(Date.now() - requestStartedAt);
+
+    const intervalId = window.setInterval(() => {
+      setElapsedRequestMs(Date.now() - requestStartedAt);
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [loading, requestStartedAt]);
 
   const sortedOffers = useMemo(
     () => sortOffers(response?.data ?? [], sortBy, sortDirection),
@@ -231,16 +286,19 @@ export default function SearchPage() {
     [statusFilteredOffers, tableSearchText]
   );
 
+  const buildScrapeParams = (): SearchScrapeParams => ({
+    limit,
+    keywords,
+    keywordMode,
+    salaryRangeOnly,
+    sortBy,
+    sortDirection,
+    sourceLimits,
+    timeoutSeconds: parseScrapeTimeoutSeconds(scrapeTimeoutSeconds),
+  });
+
   const runScrapeFallback = async (): Promise<void> => {
-    const fallback = await fetchSearchScrape({
-      limit,
-      keywords,
-      keywordMode,
-      salaryRangeOnly,
-      sortBy,
-      sortDirection,
-      sourceLimits,
-    });
+    const fallback = await fetchSearchScrape(buildScrapeParams());
 
     setResponse(fallback.payload);
     setProgressPercent(100);
@@ -435,6 +493,7 @@ export default function SearchPage() {
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const startedAt = Date.now();
     setLoading(true);
     setIsBulkGenerating(false);
     setBulkProgress(null);
@@ -444,6 +503,8 @@ export default function SearchPage() {
     setProgressPercent(0);
     setProgressMessage('Starting scrape...');
     setProgressBySource({ ...EMPTY_SCRAPED_BY_SOURCE });
+    setRequestStartedAt(startedAt);
+    setElapsedRequestMs(0);
 
     try {
       if (typeof EventSource === 'undefined') {
@@ -453,18 +514,7 @@ export default function SearchPage() {
 
       await new Promise<void>((resolve, reject) => {
         let completed = false;
-        const streamUrl = buildSearchScrapeUrl(
-          {
-            limit,
-            keywords,
-            keywordMode,
-            salaryRangeOnly,
-            sortBy,
-            sortDirection,
-            sourceLimits,
-          },
-          true
-        );
+        const streamUrl = buildSearchScrapeUrl(buildScrapeParams(), true);
         const eventSource = new EventSource(streamUrl);
 
         eventSource.addEventListener('progress', (rawEvent) => {
@@ -510,6 +560,7 @@ export default function SearchPage() {
     } catch (scrapeError) {
       setError(scrapeError instanceof Error ? scrapeError.message : 'Could not fetch offers.');
     } finally {
+      setElapsedRequestMs(Date.now() - startedAt);
       setLoading(false);
     }
   };
@@ -533,7 +584,7 @@ export default function SearchPage() {
               <CardTitle className="text-3xl md:text-4xl">Search</CardTitle>
               <CardDescription className="font-sans text-sm text-[#4B5563]">
                 Scraping ofert z providerow: NoFluffJobs, JustJoinIT, Bulldogjob, theprotocol.it,
-                Solid.jobs.
+                Solid.jobs, Pracuj.pl.
               </CardDescription>
             </div>
             <Link href="/dashboard">
@@ -547,7 +598,7 @@ export default function SearchPage() {
 
         <Card className="border-2 border-black bg-white shadow-[6px_6px_0px_0px_#000000]">
           <form onSubmit={onSubmit} className="space-y-5">
-            <div className="grid gap-4 md:grid-cols-[200px_1fr_180px_180px]">
+            <div className="grid gap-4 md:grid-cols-[140px_1fr_160px_160px_140px]">
               <label className="space-y-1">
                 <span className="font-mono text-xs uppercase tracking-wider text-black">Limit</span>
                 <Input
@@ -571,6 +622,20 @@ export default function SearchPage() {
                   value={keywords}
                   onChange={(event) => setKeywords(event.target.value)}
                   placeholder="react,node,typescript"
+                />
+              </label>
+
+              <label className="space-y-1">
+                <span className="font-mono text-xs uppercase tracking-wider text-black">
+                  Timeout (s)
+                </span>
+                <Input
+                  type="number"
+                  min={MIN_SCRAPE_TIMEOUT_SECONDS}
+                  max={MAX_SCRAPE_TIMEOUT_SECONDS}
+                  value={scrapeTimeoutSeconds}
+                  onChange={(event) => setScrapeTimeoutSeconds(event.target.value)}
+                  placeholder="180"
                 />
               </label>
 
@@ -606,7 +671,12 @@ export default function SearchPage() {
               </label>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-5">
+            <p className="font-mono text-[11px] uppercase tracking-wider text-[#4B5563]">
+              Timeout applies per source scrape request. Range: {MIN_SCRAPE_TIMEOUT_SECONDS}-
+              {MAX_SCRAPE_TIMEOUT_SECONDS}s.
+            </p>
+
+            <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
               {SOURCE_CONFIG.map((source) => (
                 <label key={source.key} className="space-y-1">
                   <span className="font-mono text-xs uppercase tracking-wider text-black">
@@ -673,16 +743,21 @@ export default function SearchPage() {
         {loading && (
           <Card className="border-2 border-black bg-white shadow-[6px_6px_0px_0px_#000000]">
             <div className="space-y-3">
-              <p className="font-mono text-xs uppercase tracking-wider text-black">
-                {progressMessage || 'Scraping in progress'}
-              </p>
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <p className="font-mono text-xs uppercase tracking-wider text-black">
+                  {progressMessage || 'Scraping in progress'}
+                </p>
+                <p className="font-mono text-xs uppercase tracking-wider text-[#1D4ED8]">
+                  Elapsed: {formatElapsedDuration(elapsedRequestMs)}
+                </p>
+              </div>
               <div className="h-3 w-full border border-black bg-[#E5E5E0]">
                 <div
                   className="h-full bg-[#1D4ED8] transition-all"
                   style={{ width: `${Math.max(1, Math.min(100, progressPercent))}%` }}
                 />
               </div>
-              <div className="grid gap-2 md:grid-cols-5">
+              <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
                 {SOURCE_CONFIG.map((source) => (
                   <p
                     key={source.key}
@@ -727,6 +802,20 @@ export default function SearchPage() {
                 <p className="font-mono text-[11px] uppercase tracking-wider text-[#4B5563]">
                   Duration: {response.meta.durationMs}ms
                 </p>
+              </div>
+              <div className="mt-4 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+                {SOURCE_CONFIG.map((source) => (
+                  <p
+                    key={source.key}
+                    className="font-mono text-[11px] uppercase tracking-wider text-[#4B5563]"
+                  >
+                    {source.label}:{' '}
+                    {formatSourceScrapeCount(
+                      response.meta.scrapedBySource[source.key],
+                      response.meta.requestedScrapeBySource[source.key]
+                    )}
+                  </p>
+                ))}
               </div>
               <div className="mt-4 flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
                 <Button

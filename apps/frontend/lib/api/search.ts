@@ -5,7 +5,8 @@ export type OfferSource =
   | 'justjoinit'
   | 'bulldogjob'
   | 'theprotocol'
-  | 'solidjobs';
+  | 'solidjobs'
+  | 'pracujpl';
 
 export type KeywordMode = 'and' | 'or';
 export type OfferSortBy = 'relevance' | 'name' | 'salary';
@@ -88,6 +89,7 @@ export type SearchScrapeParams = {
   sortBy: OfferSortBy;
   sortDirection: OfferSortDirection;
   sourceLimits: Record<OfferSource, string>;
+  timeoutSeconds?: number;
 };
 
 const SOURCE_QUERY_KEYS: Record<OfferSource, string> = {
@@ -96,6 +98,7 @@ const SOURCE_QUERY_KEYS: Record<OfferSource, string> = {
   bulldogjob: 'scrapeLimitBulldogJob',
   theprotocol: 'scrapeLimitTheProtocol',
   solidjobs: 'scrapeLimitSolidJobs',
+  pracujpl: 'scrapeLimitPracujPl',
 };
 
 export function buildSearchScrapeUrl(params: SearchScrapeParams, stream = false): string {
@@ -106,6 +109,9 @@ export function buildSearchScrapeUrl(params: SearchScrapeParams, stream = false)
   query.set('salaryRangeOnly', String(params.salaryRangeOnly));
   query.set('sortBy', params.sortBy);
   query.set('sortDirection', params.sortDirection);
+  if (typeof params.timeoutSeconds === 'number' && Number.isFinite(params.timeoutSeconds)) {
+    query.set('timeoutSeconds', String(params.timeoutSeconds));
+  }
 
   (Object.keys(SOURCE_QUERY_KEYS) as OfferSource[]).forEach((source) => {
     const value = params.sourceLimits[source]?.trim();

@@ -30,6 +30,10 @@ import {
   type ResumeListItem,
 } from '@/lib/api/resume';
 import { useStatusCache } from '@/lib/context/status-cache';
+import {
+  removeOfferResumeEntriesByResumeId,
+  removeOfferResumeEntriesByResumeIds,
+} from '@/lib/search-offer-resume-map';
 
 type ProcessingStatus = 'pending' | 'processing' | 'ready' | 'failed' | 'loading';
 
@@ -262,15 +266,18 @@ export default function DashboardPage() {
     setIsDeletingAllResumes(true);
     try {
       const nonMasterResumes = await fetchResumeList(false);
+      const deletedResumeIds: string[] = [];
       for (const resume of nonMasterResumes) {
         try {
           await deleteResume(resume.resume_id);
           decrementResumes();
+          deletedResumeIds.push(resume.resume_id);
         } catch (err) {
           console.error(`Failed to delete resume ${resume.resume_id}:`, err);
         }
       }
 
+      removeOfferResumeEntriesByResumeIds(deletedResumeIds);
       setTailoredResumes([]);
       jobSnippetCacheRef.current = {};
       setShowDeleteAllDialog(false);
@@ -293,6 +300,7 @@ export default function DashboardPage() {
     try {
       await deleteResume(tailoredResumeToDelete.resume_id);
       decrementResumes();
+      removeOfferResumeEntriesByResumeId(tailoredResumeToDelete.resume_id);
       setTailoredResumes((prev) =>
         prev.filter((resume) => resume.resume_id !== tailoredResumeToDelete.resume_id)
       );

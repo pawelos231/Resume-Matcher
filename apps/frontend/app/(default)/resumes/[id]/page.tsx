@@ -20,6 +20,7 @@ import { useTranslations } from '@/lib/i18n';
 import { withLocalizedDefaultSections } from '@/lib/utils/section-helpers';
 import { useLanguage } from '@/lib/context/language-context';
 import { downloadBlobAsFile, openUrlInNewTab, sanitizeFilename } from '@/lib/utils/download';
+import { removeOfferResumeEntriesByResumeId } from '@/lib/search-offer-resume-map';
 
 type ProcessingStatus = 'pending' | 'processing' | 'ready' | 'failed';
 
@@ -196,6 +197,8 @@ export default function ResumeViewerPage() {
       if (isMasterResume) {
         localStorage.removeItem('master_resume_id');
         setHasMasterResume(false);
+      } else {
+        removeOfferResumeEntriesByResumeId(resumeId);
       }
       setShowDeleteDialog(false);
       setShowDeleteSuccessDialog(true);
@@ -305,18 +308,12 @@ export default function ResumeViewerPage() {
               </Button>
             )}
             {!isMasterResume && hasCoverLetter && (
-              <Button
-                variant="outline"
-                onClick={() => router.push(`/cover-letters/${resumeId}`)}
-              >
+              <Button variant="outline" onClick={() => router.push(`/cover-letters/${resumeId}`)}>
                 {t('builder.previewTabs.coverLetter')}
               </Button>
             )}
             {!isMasterResume && hasOutreachMessage && (
-              <Button
-                variant="outline"
-                onClick={() => router.push(`/cold-mails/${resumeId}`)}
-              >
+              <Button variant="outline" onClick={() => router.push(`/cold-mails/${resumeId}`)}>
                 {t('builder.previewTabs.outreach')}
               </Button>
             )}

@@ -201,7 +201,9 @@ export const RegenerateDiffPreview: React.FC<RegenerateDiffPreviewProps> = ({
                   {/* Change Summary */}
                   {item.diff_summary && (
                     <div className="p-3 border-b border-black">
-                      <p className="font-mono text-xs text-blue-700">{item.diff_summary}</p>
+                      <p className="builder-meta-accent font-mono text-xs text-blue-700">
+                        {item.diff_summary}
+                      </p>
                     </div>
                   )}
 

@@ -50,6 +50,7 @@ export function CoverLetterPreview({
         'overflow-hidden',
         className
       )}
+      data-theme-surface="paper"
     >
       {/* Letter Content */}
       <div

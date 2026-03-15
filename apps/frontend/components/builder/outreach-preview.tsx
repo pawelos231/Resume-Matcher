@@ -22,6 +22,7 @@ export function OutreachPreview({ content, className }: OutreachPreviewProps) {
         'overflow-hidden',
         className
       )}
+      data-theme-surface="paper"
     >
       {/* Preview Header */}
       <div className="p-4 border-b-2 border-black bg-[#F5F5F0]">

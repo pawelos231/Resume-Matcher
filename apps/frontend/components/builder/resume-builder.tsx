@@ -620,7 +620,7 @@ const ResumeBuilderContent = () => {
                 {t('nav.builder')}
               </h1>
               <div className="mt-3 flex items-center gap-3">
-                <p className="text-sm font-mono text-blue-700 uppercase tracking-wide font-bold">
+                <p className="builder-meta-accent text-sm font-mono text-blue-700 uppercase tracking-wide font-bold">
                   {'// '}
                   {resumeId ? t('builder.editMode') : t('builder.createAndPreview')}
                 </p>
@@ -925,7 +925,7 @@ const ResumeBuilderContent = () => {
         </div>
 
         {/* Footer */}
-        <div className="p-4 bg-[#F0F0E8] flex justify-between items-center font-mono text-xs text-blue-700 border-t border-black no-print">
+        <div className="builder-meta-accent p-4 bg-[#F0F0E8] flex justify-between items-center font-mono text-xs text-blue-700 border-t border-black no-print">
           <span className="uppercase font-bold flex items-center gap-2">
             <Image
               src="/logo.svg"

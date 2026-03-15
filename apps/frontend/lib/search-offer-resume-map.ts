@@ -70,6 +70,24 @@ export function saveOfferResumeMap(map: OfferResumeMap): void {
   writeStorageValue(OFFER_RESUME_MAP_STORAGE_KEY, JSON.stringify(map));
 }
 
+export function removeOfferResumeEntriesByResumeIds(resumeIds: string[]): OfferResumeMap {
+  if (resumeIds.length === 0) {
+    return readOfferResumeMap();
+  }
+
+  const resumeIdSet = new Set(resumeIds);
+  const current = readOfferResumeMap();
+  const next = Object.fromEntries(
+    Object.entries(current).filter(([, entry]) => !resumeIdSet.has(entry.resumeId))
+  ) as OfferResumeMap;
+  saveOfferResumeMap(next);
+  return next;
+}
+
+export function removeOfferResumeEntriesByResumeId(resumeId: string): OfferResumeMap {
+  return removeOfferResumeEntriesByResumeIds([resumeId]);
+}
+
 export function markOfferResumeGenerated(
   marker: OfferResumeMarker,
   resumeId: string
@@ -94,10 +112,7 @@ export function savePendingOfferMarker(marker: OfferResumeMarker): void {
   if (typeof window === 'undefined') {
     return;
   }
-  window.sessionStorage.setItem(
-    TAILOR_PREFILL_OFFER_MARKER_STORAGE_KEY,
-    JSON.stringify(marker)
-  );
+  window.sessionStorage.setItem(TAILOR_PREFILL_OFFER_MARKER_STORAGE_KEY, JSON.stringify(marker));
 }
 
 export function readPendingOfferMarker(): OfferResumeMarker | null {

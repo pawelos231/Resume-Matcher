@@ -49,7 +49,7 @@ export function GeneratePrompt({
         <p className="font-mono text-xs text-gray-500 max-w-md mb-6 leading-relaxed">
           {t('builder.generatePrompt.notAvailableDescription', { title })}
         </p>
-        <div className="flex items-center gap-2 text-blue-700 font-mono text-xs">
+        <div className="builder-meta-accent flex items-center gap-2 text-blue-700 font-mono text-xs">
           <span>{t('builder.generatePrompt.goToDashboard')}</span>
           <ArrowRight className="w-4 h-4" />
         </div>

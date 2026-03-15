@@ -1,0 +1,6 @@
+INFO:     Will watch for changes in these directories: ['C:\\Users\\pawel\\Desktop\\vibe_code_scaper_scaffold\\apps\\backend']
+INFO:     Uvicorn running on http://0.0.0.0:8002 (Press CTRL+C to quit)
+INFO:     Started reloader process [18160] using StatReload
+INFO:     Started server process [46368]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.

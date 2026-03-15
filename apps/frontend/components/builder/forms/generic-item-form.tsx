@@ -141,7 +141,10 @@ export const GenericItemForm: React.FC<GenericItemFormProps> = ({
 
       <div className="space-y-8">
         {items.map((item) => (
-          <div key={item.id} className="p-6 border border-black bg-gray-50 relative group">
+          <div
+            key={item.id}
+            className="builder-subsection-surface p-6 border border-black bg-gray-50 relative group"
+          >
             <Button
               variant="ghost"
               size="icon"
@@ -243,7 +246,7 @@ export const GenericItemForm: React.FC<GenericItemFormProps> = ({
         ))}
 
         {items.length === 0 && (
-          <div className="text-center py-12 bg-gray-50 border border-dashed border-black">
+          <div className="builder-subsection-empty text-center py-12 bg-gray-50 border border-dashed border-black">
             <p className="font-mono text-sm text-gray-500 mb-4">
               {t('builder.genericItemForm.noEntries', { label: finalItemLabel })}
             </p>
