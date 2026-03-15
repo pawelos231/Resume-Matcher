@@ -1,6 +1,0 @@
-INFO:     127.0.0.1:51396 - "GET /api/v1/status HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51460 - "GET /api/v1/config/language HTTP/1.1" 200 OK
-INFO:     127.0.0.1:51461 - "GET /api/v1/status HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49499 - "HEAD /docs HTTP/1.1" 200 OK
-INFO:     127.0.0.1:49498 - "GET /health HTTP/1.1" 404 Not Found
-INFO:     127.0.0.1:49507 - "GET /openapi.json HTTP/1.1" 200 OK
