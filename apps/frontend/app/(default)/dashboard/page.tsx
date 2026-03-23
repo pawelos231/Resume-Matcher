@@ -36,14 +36,102 @@ import {
 } from '@/lib/search-offer-resume-map';
 
 type ProcessingStatus = 'pending' | 'processing' | 'ready' | 'failed' | 'loading';
+type ResumeCategoryId =
+  | 'fullstack'
+  | 'frontend'
+  | 'backend'
+  | 'mobile'
+  | 'data'
+  | 'devops'
+  | 'qa'
+  | 'uiux'
+  | 'uncategorized';
+
+const CATEGORY_ORDER: ResumeCategoryId[] = [
+  'fullstack',
+  'frontend',
+  'backend',
+  'mobile',
+  'data',
+  'devops',
+  'qa',
+  'uiux',
+  'uncategorized',
+];
+
+const CATEGORY_META: Record<ResumeCategoryId, { label: string; badgeClassName: string }> = {
+  fullstack: {
+    label: 'Full-Stack',
+    badgeClassName: 'border-black bg-black text-white',
+  },
+  frontend: {
+    label: 'Frontend',
+    badgeClassName: 'border-blue-700 text-blue-700 bg-white',
+  },
+  backend: {
+    label: 'Backend',
+    badgeClassName: 'border-green-700 text-green-700 bg-white',
+  },
+  mobile: {
+    label: 'Mobile',
+    badgeClassName: 'border-orange-500 text-orange-600 bg-white',
+  },
+  data: {
+    label: 'Data / AI',
+    badgeClassName: 'border-red-600 text-red-600 bg-white',
+  },
+  devops: {
+    label: 'DevOps',
+    badgeClassName: 'border-black text-black bg-[#E5E5E0]',
+  },
+  qa: {
+    label: 'QA',
+    badgeClassName: 'border-black text-black bg-[#F0F0E8]',
+  },
+  uiux: {
+    label: 'UI / UX',
+    badgeClassName: 'border-blue-700 text-black bg-[#F0F0E8]',
+  },
+  uncategorized: {
+    label: 'Uncategorized',
+    badgeClassName: 'border-gray-500 text-gray-500 bg-white',
+  },
+};
+
+function sortCategories(categories: string[]): string[] {
+  return [...categories].sort((left, right) => {
+    const leftIndex = CATEGORY_ORDER.indexOf(left as ResumeCategoryId);
+    const rightIndex = CATEGORY_ORDER.indexOf(right as ResumeCategoryId);
+
+    if (leftIndex === -1 && rightIndex === -1) {
+      return left.localeCompare(right);
+    }
+    if (leftIndex === -1) {
+      return 1;
+    }
+    if (rightIndex === -1) {
+      return -1;
+    }
+    return leftIndex - rightIndex;
+  });
+}
+
+function getCategoryMeta(categoryId: string): { label: string; badgeClassName: string } {
+  if (categoryId in CATEGORY_META) {
+    return CATEGORY_META[categoryId as ResumeCategoryId];
+  }
+  return CATEGORY_META.uncategorized;
+}
 
 export default function DashboardPage() {
   const { t, locale } = useTranslations();
   const [masterResumeId, setMasterResumeId] = useState<string | null>(null);
+  const [masterResumeSummary, setMasterResumeSummary] = useState<ResumeListItem | null>(null);
   const [processingStatus, setProcessingStatus] = useState<ProcessingStatus>('loading');
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showDeleteAllDialog, setShowDeleteAllDialog] = useState(false);
   const [tailoredResumes, setTailoredResumes] = useState<ResumeListItem[]>([]);
+  const [activeCategoryFilter, setActiveCategoryFilter] = useState<string>('all');
   const [isRetrying, setIsRetrying] = useState(false);
   const [isInitializingManualMaster, setIsInitializingManualMaster] = useState(false);
   const [manualInitError, setManualInitError] = useState<string | null>(null);
@@ -73,13 +161,47 @@ export default function DashboardPage() {
   const isTailorEnabled =
     Boolean(masterResumeId) && processingStatus === 'ready' && isLlmConfigured;
 
+  const renderCategoryBadges = (categories: string[], limit = 3) => {
+    const visibleCategories = sortCategories(Array.from(new Set(categories))).slice(0, limit);
+
+    if (visibleCategories.length === 0) {
+      return null;
+    }
+
+    return (
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {visibleCategories.map((categoryId) => {
+          const categoryMeta = getCategoryMeta(categoryId);
+          return (
+            <span
+              key={categoryId}
+              className={`border px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-[0.18em] ${categoryMeta.badgeClassName}`}
+            >
+              {categoryMeta.label}
+            </span>
+          );
+        })}
+      </div>
+    );
+  };
+
   const formatDate = (value: string) => {
     if (!value) return t('common.unknown');
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return t('common.unknown');
 
     const dateLocale =
-      locale === 'es' ? 'es-ES' : locale === 'zh' ? 'zh-CN' : locale === 'ja' ? 'ja-JP' : 'en-US';
+      locale === 'es'
+        ? 'es-ES'
+        : locale === 'zh'
+          ? 'zh-CN'
+          : locale === 'ja'
+            ? 'ja-JP'
+            : locale === 'pt'
+              ? 'pt-BR'
+              : locale === 'pl'
+                ? 'pl-PL'
+                : 'en-US';
 
     return date.toLocaleDateString(dateLocale, {
       month: 'short',
@@ -100,6 +222,7 @@ export default function DashboardPage() {
       if (err instanceof Error && err.message.includes('404')) {
         localStorage.removeItem('master_resume_id');
         setMasterResumeId(null);
+        setMasterResumeSummary(null);
         return;
       }
       setProcessingStatus('failed');
@@ -121,6 +244,8 @@ export default function DashboardPage() {
       const storedId = localStorage.getItem('master_resume_id');
       const resolvedMasterId = masterFromList?.resume_id || storedId;
 
+      setMasterResumeSummary(masterFromList ?? null);
+
       if (resolvedMasterId) {
         localStorage.setItem('master_resume_id', resolvedMasterId);
         setMasterResumeId(resolvedMasterId);
@@ -128,6 +253,7 @@ export default function DashboardPage() {
       } else {
         localStorage.removeItem('master_resume_id');
         setMasterResumeId(null);
+        setMasterResumeSummary(null);
       }
 
       const filtered = data.filter((r) => r.resume_id !== resolvedMasterId);
@@ -188,11 +314,25 @@ export default function DashboardPage() {
     return () => window.removeEventListener('focus', handleFocus);
   }, [loadTailoredResumes, checkResumeStatus]);
 
+  useEffect(() => {
+    if (activeCategoryFilter === 'all') {
+      return;
+    }
+
+    const hasActiveCategory = tailoredResumes.some((resume) =>
+      resume.categories.includes(activeCategoryFilter)
+    );
+    if (!hasActiveCategory) {
+      setActiveCategoryFilter('all');
+    }
+  }, [activeCategoryFilter, tailoredResumes]);
+
   const handleUploadComplete = (resumeId: string) => {
     localStorage.setItem('master_resume_id', resumeId);
     setMasterResumeId(resumeId);
     // Check status after upload completes
     checkResumeStatus(resumeId);
+    void loadTailoredResumes();
     // Update cached counters
     incrementResumes();
     setHasMasterResume(true);
@@ -208,6 +348,7 @@ export default function DashboardPage() {
       setProcessingStatus(result.processing_status as ProcessingStatus);
       setHasMasterResume(true);
       incrementResumes();
+      void loadTailoredResumes();
       router.push(`/builder?id=${encodeURIComponent(result.resume_id)}`);
     } catch (err) {
       console.error('Failed to initialize manual master resume:', err);
@@ -254,6 +395,7 @@ export default function DashboardPage() {
       setHasMasterResume(false);
       localStorage.removeItem('master_resume_id');
       setMasterResumeId(null);
+      setMasterResumeSummary(null);
       setProcessingStatus('loading');
       setIsUploadDialogOpen(true);
       await loadTailoredResumes();
@@ -279,6 +421,7 @@ export default function DashboardPage() {
 
       removeOfferResumeEntriesByResumeIds(deletedResumeIds);
       setTailoredResumes([]);
+      setActiveCategoryFilter('all');
       jobSnippetCacheRef.current = {};
       setShowDeleteAllDialog(false);
       await loadTailoredResumes();
@@ -370,8 +513,17 @@ export default function DashboardPage() {
   };
 
   const hasTailoredResumes = tailoredResumes.length > 0;
+  const availableCategoryFilters = sortCategories(
+    Array.from(new Set(tailoredResumes.flatMap((resume) => resume.categories)))
+  );
+  const visibleTailoredResumes =
+    activeCategoryFilter === 'all'
+      ? tailoredResumes
+      : tailoredResumes.filter((resume) => resume.categories.includes(activeCategoryFilter));
+  const showEmptyCategoryState = hasTailoredResumes && visibleTailoredResumes.length === 0;
+  const visibleResumeCardCount = showEmptyCategoryState ? 1 : visibleTailoredResumes.length;
   const masterCardCount = masterResumeId ? 1 : 2;
-  const totalCards = masterCardCount + tailoredResumes.length + 2 + (hasTailoredResumes ? 1 : 0);
+  const totalCards = masterCardCount + visibleResumeCardCount + 2 + (hasTailoredResumes ? 1 : 0);
   const fillerCount = Math.max(0, (5 - (totalCards % 5)) % 5);
   const extraFillerCount = 5;
   // Use Tailwind classes for fillers now that we have them in config or use specific hex if needed
@@ -408,6 +560,43 @@ export default function DashboardPage() {
           <p className="font-mono text-xs uppercase tracking-wider text-red-700">
             {manualInitError}
           </p>
+        </div>
+      )}
+
+      {hasTailoredResumes && availableCategoryFilters.length > 0 && (
+        <div className="border-2 border-black bg-white p-4 shadow-sw-default">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="font-mono text-[11px] uppercase tracking-[0.3em] text-gray-500">
+                {t('common.filter')}
+              </p>
+              <h2 className="font-serif text-xl font-semibold">Resume Categories</h2>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant={activeCategoryFilter === 'all' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setActiveCategoryFilter('all')}
+              >
+                All ({tailoredResumes.length})
+              </Button>
+              {availableCategoryFilters.map((categoryId) => (
+                <Button
+                  key={categoryId}
+                  variant={activeCategoryFilter === categoryId ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setActiveCategoryFilter(categoryId)}
+                >
+                  {getCategoryMeta(categoryId).label} (
+                  {
+                    tailoredResumes.filter((resume) => resume.categories.includes(categoryId))
+                      .length
+                  }
+                  )
+                </Button>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -539,6 +728,8 @@ export default function DashboardPage() {
                 {t('dashboard.masterResume')}
               </CardTitle>
 
+              {masterResumeSummary && renderCategoryBadges(masterResumeSummary.categories, 2)}
+
               <div
                 className={`text-xs font-mono mt-auto pt-4 flex flex-col gap-2 uppercase ${getStatusDisplay().color}`}
               >
@@ -624,14 +815,33 @@ export default function DashboardPage() {
                 )}
               </Button>
               <p className="text-xs font-mono mt-4 uppercase text-red-700">
-                Delete Tailored Resumes
+                {t('dashboard.deleteTailoredResumes')}
               </p>
             </div>
           </Card>
         )}
 
         {/* 5. Tailored Resumes */}
-        {tailoredResumes.map((resume) => {
+        {showEmptyCategoryState && (
+          <Card
+            variant="outline"
+            className="aspect-square h-full border-dashed border-black bg-white"
+          >
+            <div className="flex-1 flex flex-col justify-between">
+              <div className="w-16 h-16 border-2 border-black bg-[#E5E5E0] flex items-center justify-center">
+                <span className="font-mono text-lg font-bold">0</span>
+              </div>
+              <div>
+                <CardTitle className="text-lg uppercase">No Resumes In This Category</CardTitle>
+                <CardDescription className="mt-2">
+                  Try another category filter or switch back to All.
+                </CardDescription>
+              </div>
+            </div>
+          </Card>
+        )}
+
+        {visibleTailoredResumes.map((resume) => {
           const title =
             resume.title || resume.jobSnippet || resume.filename || t('dashboard.tailoredResume');
           const color = cardPalette[hashTitle(title) % cardPalette.length];
@@ -672,6 +882,7 @@ export default function DashboardPage() {
                     {title}
                   </span>
                 </CardTitle>
+                {renderCategoryBadges(resume.categories)}
                 {(coverLetterPreview || outreachPreview) && (
                   <div className="space-y-2 mt-2">
                     {coverLetterPreview && (
@@ -739,9 +950,9 @@ export default function DashboardPage() {
         <ConfirmDialog
           open={showDeleteAllDialog}
           onOpenChange={setShowDeleteAllDialog}
-          title="Delete Tailored Resumes"
-          description="This will permanently remove all tailored resumes. Your master resume will be kept."
-          confirmLabel="Delete All"
+          title={t('confirmations.deleteAllTailoredResumesTitle')}
+          description={t('confirmations.deleteAllTailoredResumesDescription')}
+          confirmLabel={t('confirmations.deleteAllTailoredResumesConfirmLabel')}
           cancelLabel={t('confirmations.keepResumeCancelLabel')}
           onConfirm={confirmDeleteAllResumes}
           variant="danger"

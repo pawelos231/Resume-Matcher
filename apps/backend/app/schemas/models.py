@@ -397,6 +397,8 @@ class ResumeSummary(BaseModel):
     title: str | None = None
     cover_letter_preview: str | None = None
     outreach_message_preview: str | None = None
+    categories: list[str] = Field(default_factory=list)
+    primary_category: str | None = None
 
 
 class ResumeListResponse(BaseModel):
@@ -407,11 +409,35 @@ class ResumeListResponse(BaseModel):
 
 
 # Job Description Models
+class JobOfferMarker(BaseModel):
+    """Persistent search-offer marker sent with generated job descriptions."""
+
+    offerKey: str
+    source: Literal[
+        "nofluffjobs",
+        "justjoinit",
+        "bulldogjob",
+        "theprotocol",
+        "solidjobs",
+        "pracujpl",
+        "rocketjobs",
+        "olxpraca",
+        "indeed",
+        "glassdoor",
+        "ziprecruiter",
+        "careerbuilder",
+    ]
+    title: str
+    company: str
+    url: str
+
+
 class JobUploadRequest(BaseModel):
     """Request to upload job descriptions."""
 
     job_descriptions: list[str]
     resume_id: str | None = None
+    offerMarker: JobOfferMarker | None = None
 
 
 class JobUploadResponse(BaseModel):
@@ -573,8 +599,8 @@ class FeatureConfigResponse(BaseModel):
 class LanguageConfigRequest(BaseModel):
     """Request to update language settings."""
 
-    ui_language: str | None = None  # en, es, zh, ja - for interface
-    content_language: str | None = None  # en, es, zh, ja - for generated content
+    ui_language: str | None = None  # en, es, zh, ja, pt, pl - for interface
+    content_language: str | None = None  # en, es, zh, ja, pt, pl - for generated content
 
 
 class LanguageConfigResponse(BaseModel):
@@ -582,7 +608,9 @@ class LanguageConfigResponse(BaseModel):
 
     ui_language: str = "en"  # Interface language
     content_language: str = "en"  # Generated content language
-    supported_languages: list[str] = ["en", "es", "zh", "ja"]
+    supported_languages: list[str] = Field(
+        default_factory=lambda: ["en", "es", "zh", "ja", "pt", "pl"]
+    )
 
 
 class PromptOption(BaseModel):

@@ -36,6 +36,7 @@ class TestSearchKeywordMatching(unittest.TestCase):
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["matchedKeywords"], ["react"])
+        self.assertEqual(result[0]["workMode"], "unknown")
 
     def test_matches_keyword_as_token_substring(self) -> None:
         offers = [_offer("Senior JavaScript Developer")]
@@ -93,6 +94,60 @@ class TestSearchKeywordMatching(unittest.TestCase):
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["matchedKeywords"], ["react"])
+
+    def test_infers_remote_work_mode_from_searchable_text(self) -> None:
+        offers = [
+            _offer(
+                "Senior Engineer",
+                searchable_text="Senior Engineer React TypeScript fully remote",
+            )
+        ]
+
+        result = to_public_offers(
+            offers=offers,
+            keywords=["react"],
+            keyword_mode="and",
+            salary_range_only=False,
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["workMode"], "remote")
+
+    def test_infers_hybrid_work_mode_from_searchable_text(self) -> None:
+        offers = [
+            _offer(
+                "Backend Engineer",
+                searchable_text="Backend Engineer Node.js hybrid work model Warsaw",
+            )
+        ]
+
+        result = to_public_offers(
+            offers=offers,
+            keywords=["node"],
+            keyword_mode="and",
+            salary_range_only=False,
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["workMode"], "hybrid")
+
+    def test_infers_office_work_mode_from_searchable_text(self) -> None:
+        offers = [
+            _offer(
+                "Backend Engineer",
+                searchable_text="Backend Engineer Python onsite in-office team",
+            )
+        ]
+
+        result = to_public_offers(
+            offers=offers,
+            keywords=["python"],
+            keyword_mode="and",
+            salary_range_only=False,
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["workMode"], "office")
 
     def test_matches_keyword_inside_punctuated_token(self) -> None:
         offers = [

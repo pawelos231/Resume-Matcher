@@ -6,20 +6,29 @@ import asyncio
 import contextlib
 import copy
 import datetime as dt
+import inspect
 import json
+import re
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass
 from threading import Lock
 from typing import Any, Callable, Literal
 
+from app.database import db
 from app.services.search.providers import (
     scrape_bulldogjob,
+    scrape_careerbuilder,
+    scrape_glassdoor,
+    scrape_indeed,
     scrape_justjoinit,
     scrape_nofluffjobs,
+    scrape_olxpraca,
     scrape_pracujpl,
+    scrape_rocketjobs,
     scrape_solidjobs,
     scrape_theprotocol,
+    scrape_ziprecruiter,
 )
 from app.services.search.types import (
     KeywordMode,
@@ -28,18 +37,20 @@ from app.services.search.types import (
     OfferSource,
     PublicOffer,
     ScrapedOffer,
+    WorkMode,
 )
 
 DEFAULT_LIMIT = 1000
 MAX_LIMIT = 10_000
 MAX_SCRAPE_LIMIT = 10_000
-MIN_SOURCE_SCRAPE_TIMEOUT_S = 15
+MIN_SOURCE_SCRAPE_TIMEOUT_S = 10
 MAX_SOURCE_SCRAPE_TIMEOUT_S = 600
 # Keep scrape runs responsive in UI. "max" mode can scan many pages, but should still
 # fail fast enough to avoid appearing hung from the frontend perspective.
 SOURCE_SCRAPE_TIMEOUT_S = 60
 SOURCE_SCRAPE_TIMEOUT_IN_MAX_MODE_S = 180
 SEARCH_RESULT_CACHE_TTL_S = 180
+SEARCH_CACHE_SCHEMA_VERSION = 2
 DEFAULT_KEYWORD_MODE: KeywordMode = "and"
 DEFAULT_SORT_BY: OfferSortBy = "relevance"
 DEFAULT_SORT_DIRECTION: OfferSortDirection = "asc"
@@ -50,6 +61,12 @@ ALL_SOURCES: list[OfferSource] = [
     "theprotocol",
     "solidjobs",
     "pracujpl",
+    "rocketjobs",
+    "olxpraca",
+    "indeed",
+    "glassdoor",
+    "ziprecruiter",
+    "careerbuilder",
 ]
 
 SOURCE_LABELS: dict[OfferSource, str] = {
@@ -59,6 +76,12 @@ SOURCE_LABELS: dict[OfferSource, str] = {
     "theprotocol": "theprotocol.it",
     "solidjobs": "Solid.jobs",
     "pracujpl": "Pracuj.pl",
+    "rocketjobs": "RocketJobs",
+    "olxpraca": "OLX Praca",
+    "indeed": "Indeed",
+    "glassdoor": "Glassdoor",
+    "ziprecruiter": "ZipRecruiter",
+    "careerbuilder": "CareerBuilder",
 }
 
 SOURCE_LIMIT_QUERY_KEYS: dict[OfferSource, list[str]] = {
@@ -98,6 +121,38 @@ SOURCE_LIMIT_QUERY_KEYS: dict[OfferSource, list[str]] = {
         "pracujplLimit",
         "pracujLimit",
     ],
+    "rocketjobs": [
+        "scrapeLimitRocketJobs",
+        "scrapeLimitRocket",
+        "rocketjobsLimit",
+        "rocketLimit",
+    ],
+    "olxpraca": [
+        "scrapeLimitOlxPraca",
+        "scrapeLimitOlx",
+        "olxpracaLimit",
+        "olxLimit",
+    ],
+    "indeed": [
+        "scrapeLimitIndeed",
+        "indeedLimit",
+    ],
+    "glassdoor": [
+        "scrapeLimitGlassdoor",
+        "glassdoorLimit",
+    ],
+    "ziprecruiter": [
+        "scrapeLimitZipRecruiter",
+        "scrapeLimitZip",
+        "ziprecruiterLimit",
+        "zipLimit",
+    ],
+    "careerbuilder": [
+        "scrapeLimitCareerBuilder",
+        "scrapeLimitCareer",
+        "careerbuilderLimit",
+        "careerLimit",
+    ],
 }
 
 DEFAULT_SOURCE_TARGETS: dict[OfferSource, int | None] = {
@@ -107,6 +162,12 @@ DEFAULT_SOURCE_TARGETS: dict[OfferSource, int | None] = {
     "theprotocol": None,
     "solidjobs": None,
     "pracujpl": 50,
+    "rocketjobs": 20,
+    "olxpraca": 20,
+    "indeed": 20,
+    "glassdoor": 20,
+    "ziprecruiter": 20,
+    "careerbuilder": 20,
 }
 
 ScrapeTargetLabel = int | Literal["max"]
@@ -130,6 +191,81 @@ def _get_param(params: Mapping[str, str], key: str) -> str | None:
         return None
     stripped = value.strip()
     return stripped if stripped else None
+
+
+def _normalize_scrape_target_label(
+    value: Any,
+    fallback: ScrapeTargetLabel,
+) -> ScrapeTargetLabel:
+    if value == "max":
+        return "max"
+
+    if isinstance(value, int) and value >= 0:
+        return value
+
+    if isinstance(value, str):
+        stripped = value.strip().lower()
+        if stripped == "max":
+            return "max"
+        try:
+            parsed = int(stripped)
+        except ValueError:
+            return fallback
+        if parsed >= 0:
+            return parsed
+
+    return fallback
+
+
+def _normalize_scraped_count(value: Any) -> int:
+    if isinstance(value, int) and value >= 0:
+        return value
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        try:
+            parsed = int(stripped)
+        except ValueError:
+            return 0
+        if parsed >= 0:
+            return parsed
+
+    return 0
+
+
+def _normalize_search_payload(
+    payload: dict[str, Any],
+    requested_scrape_by_source: dict[OfferSource, ScrapeTargetLabel],
+) -> dict[str, Any]:
+    meta = payload.get("meta")
+    if not isinstance(meta, Mapping):
+        return payload
+
+    raw_requested = meta.get("requestedScrapeBySource")
+    raw_scraped = meta.get("scrapedBySource")
+    requested_mapping = raw_requested if isinstance(raw_requested, Mapping) else {}
+    scraped_mapping = raw_scraped if isinstance(raw_scraped, Mapping) else {}
+
+    normalized_requested = {
+        source: _normalize_scrape_target_label(
+            requested_mapping.get(source),
+            requested_scrape_by_source[source],
+        )
+        for source in ALL_SOURCES
+    }
+    normalized_scraped = {
+        source: _normalize_scraped_count(scraped_mapping.get(source))
+        for source in ALL_SOURCES
+    }
+
+    return {
+        **payload,
+        "meta": {
+            **meta,
+            "requestedScrapeBySource": normalized_requested,
+            "scrapedBySource": normalized_scraped,
+        },
+    }
 
 
 def parse_limit(params: Mapping[str, str]) -> int:
@@ -263,7 +399,6 @@ def parse_scrape_timeout_seconds(params: Mapping[str, str]) -> int | None:
 def _has_salary_range(salary: str | None) -> bool:
     if not salary:
         return False
-    import re
 
     return bool(re.search(r"\d[\d\s,.]*\s*-\s*\d[\d\s,.]*", salary))
 
@@ -309,6 +444,61 @@ def _get_offer_searchable_text(offer: ScrapedOffer) -> str:
     )
 
 
+def _infer_work_mode(offer: ScrapedOffer) -> WorkMode:
+    if offer.work_mode in {"remote", "hybrid", "office", "unknown"}:
+        return offer.work_mode
+
+    normalized = _normalize_search_text(
+        " ".join(
+            [
+                offer.title,
+                offer.location,
+                offer.searchable_text,
+            ]
+        )
+    )
+
+    if not normalized:
+        return "unknown"
+
+    hybrid_patterns = (
+        r"\bhybrid\b",
+        r"\bhybryd\w*\b",
+        r"\bpart(?:ly|ially)\s+remote\b",
+        r"\bremote(?:[-/\s]+| and )(?:office|onsite|on[-\s]?site)\b",
+        r"\b(?:office|onsite|on[-\s]?site)(?:[-/\s]+| and )remote\b",
+    )
+    remote_patterns = (
+        r"\bfull(?:y)?\s+remote\b",
+        r"\bremote[-\s]?first\b",
+        r"\bremote\b",
+        r"\bwork\s+from\s+home\b",
+        r"\bwfh\b",
+        r"\btelecommut\w*\b",
+        r"\bzdaln\w*\b",
+    )
+    office_patterns = (
+        r"\bonsite\b",
+        r"\bon[-\s]?site\b",
+        r"\bin[-\s]?office\b",
+        r"\boffice[-\s]?based\b",
+        r"\bstacjon\w*\b",
+        r"\boffice\b",
+    )
+
+    has_hybrid = any(re.search(pattern, normalized) for pattern in hybrid_patterns)
+    has_remote = any(re.search(pattern, normalized) for pattern in remote_patterns)
+    has_office = any(re.search(pattern, normalized) for pattern in office_patterns)
+
+    if has_hybrid or (has_remote and has_office):
+        return "hybrid"
+    if has_remote:
+        return "remote"
+    if has_office:
+        return "office"
+    return "unknown"
+
+
 def dedupe_offers(offers: list[ScrapedOffer]) -> list[ScrapedOffer]:
     deduped: dict[str, ScrapedOffer] = {}
     for offer in offers:
@@ -345,6 +535,7 @@ def to_public_offers(
                 "url": offer.url,
                 "skills": offer.skills,
                 "matchedKeywords": matched_keywords,
+                "workMode": _infer_work_mode(offer),
             }
         )
     return with_matches
@@ -353,7 +544,6 @@ def to_public_offers(
 def _to_numeric_salary_value(salary: str | None) -> int | None:
     if not salary:
         return None
-    import re
 
     fragments = re.findall(r"\d[\d\s,.]*", salary)
     numeric_values: list[int] = []
@@ -402,6 +592,32 @@ def _to_scrape_target_label(target: int | None) -> ScrapeTargetLabel:
     return "max" if target is None else target
 
 
+def _scraper_accepts_keywords(scraper: Callable[..., Any]) -> bool:
+    try:
+        signature = inspect.signature(scraper)
+    except (TypeError, ValueError):
+        return False
+
+    if "keywords" in signature.parameters:
+        return True
+
+    return any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+
+
+async def _run_provider_scraper(
+    scraper: Callable[..., Any],
+    target_count: int | None,
+    on_progress: Callable[[dict[str, float | int]], None] | None,
+    keywords: list[str],
+) -> list[ScrapedOffer]:
+    if _scraper_accepts_keywords(scraper):
+        return await scraper(target_count, on_progress, keywords=keywords)
+    return await scraper(target_count, on_progress)
+
+
 def _build_search_cache_key(
     limit: int,
     keywords: list[str],
@@ -414,6 +630,7 @@ def _build_search_cache_key(
 ) -> str:
     return json.dumps(
         {
+            "cacheVersion": SEARCH_CACHE_SCHEMA_VERSION,
             "limit": limit,
             "keywords": keywords,
             "keywordMode": keyword_mode,
@@ -434,12 +651,22 @@ async def _get_cached_search_result(
 ) -> tuple[int, dict[str, Any]] | None:
     async with _SEARCH_RESULT_CACHE_LOCK:
         cached = _SEARCH_RESULT_CACHE.get(cache_key)
-        if cached is None:
-            return None
-        if cached.expires_at <= time.time():
+        if cached is not None and cached.expires_at <= time.time():
             _SEARCH_RESULT_CACHE.pop(cache_key, None)
-            return None
-        return cached.status, copy.deepcopy(cached.payload)
+        elif cached is not None:
+            return cached.status, copy.deepcopy(cached.payload)
+
+    persistent_cached = db.get_cached_search_result(cache_key)
+    if persistent_cached is None:
+        return None
+
+    status = persistent_cached.get("status")
+    payload = persistent_cached.get("payload")
+    if not isinstance(status, int) or not isinstance(payload, dict):
+        return None
+
+    await _set_cached_search_result(cache_key, status, payload)
+    return status, copy.deepcopy(payload)
 
 
 async def _set_cached_search_result(
@@ -453,6 +680,12 @@ async def _set_cached_search_result(
             status=status,
             payload=copy.deepcopy(payload),
         )
+    db.upsert_cached_search_result(
+        cache_key=cache_key,
+        status=status,
+        payload=payload,
+        ttl_seconds=SEARCH_RESULT_CACHE_TTL_S,
+    )
 
 
 def _get_scraped_total(scraped_by_source: dict[OfferSource, int]) -> int:
@@ -517,13 +750,19 @@ async def run_scrape(
         source_targets,
         timeout_override_s,
     )
-    cached_result = await _get_cached_search_result(cache_key)
-    if cached_result is not None:
-        return cached_result
-
     requested_scrape_by_source: dict[OfferSource, ScrapeTargetLabel] = {
         source: _to_scrape_target_label(source_targets[source]) for source in ALL_SOURCES
     }
+    cached_result = await _get_cached_search_result(cache_key)
+    if cached_result is not None:
+        status, payload = cached_result
+        normalized_payload = _normalize_search_payload(
+            payload,
+            requested_scrape_by_source,
+        )
+        if normalized_payload != payload:
+            await _set_cached_search_result(cache_key, status, normalized_payload)
+        return status, normalized_payload
 
     active_sources = [
         source
@@ -611,11 +850,73 @@ async def run_scrape(
         )
 
     async def run_pracujpl() -> list[ScrapedOffer]:
-        return await scrape_pracujpl(
+        return await _run_provider_scraper(
+            scrape_pracujpl,
             source_targets["pracujpl"],
             lambda event: update_source_progress(
                 "pracujpl", int(event["collected"]), float(event["progress"])
             ),
+            keywords,
+        )
+
+    async def run_rocketjobs() -> list[ScrapedOffer]:
+        return await _run_provider_scraper(
+            scrape_rocketjobs,
+            source_targets["rocketjobs"],
+            lambda event: update_source_progress(
+                "rocketjobs", int(event["collected"]), float(event["progress"])
+            ),
+            keywords,
+        )
+
+    async def run_olxpraca() -> list[ScrapedOffer]:
+        return await _run_provider_scraper(
+            scrape_olxpraca,
+            source_targets["olxpraca"],
+            lambda event: update_source_progress(
+                "olxpraca", int(event["collected"]), float(event["progress"])
+            ),
+            keywords,
+        )
+
+    async def run_indeed() -> list[ScrapedOffer]:
+        return await _run_provider_scraper(
+            scrape_indeed,
+            source_targets["indeed"],
+            lambda event: update_source_progress(
+                "indeed", int(event["collected"]), float(event["progress"])
+            ),
+            keywords,
+        )
+
+    async def run_glassdoor() -> list[ScrapedOffer]:
+        return await _run_provider_scraper(
+            scrape_glassdoor,
+            source_targets["glassdoor"],
+            lambda event: update_source_progress(
+                "glassdoor", int(event["collected"]), float(event["progress"])
+            ),
+            keywords,
+        )
+
+    async def run_ziprecruiter() -> list[ScrapedOffer]:
+        return await _run_provider_scraper(
+            scrape_ziprecruiter,
+            source_targets["ziprecruiter"],
+            lambda event: update_source_progress(
+                "ziprecruiter", int(event["collected"]), float(event["progress"])
+            ),
+            keywords,
+        )
+
+    async def run_careerbuilder() -> list[ScrapedOffer]:
+        return await _run_provider_scraper(
+            scrape_careerbuilder,
+            source_targets["careerbuilder"],
+            lambda event: update_source_progress(
+                "careerbuilder", int(event["collected"]), float(event["progress"])
+            ),
+            keywords,
         )
 
     scrape_tasks: list[tuple[OfferSource, int | None, Callable[[], Any]]] = [
@@ -625,6 +926,12 @@ async def run_scrape(
         ("theprotocol", source_targets["theprotocol"], run_theprotocol),
         ("solidjobs", source_targets["solidjobs"], run_solidjobs),
         ("pracujpl", source_targets["pracujpl"], run_pracujpl),
+        ("rocketjobs", source_targets["rocketjobs"], run_rocketjobs),
+        ("olxpraca", source_targets["olxpraca"], run_olxpraca),
+        ("indeed", source_targets["indeed"], run_indeed),
+        ("glassdoor", source_targets["glassdoor"], run_glassdoor),
+        ("ziprecruiter", source_targets["ziprecruiter"], run_ziprecruiter),
+        ("careerbuilder", source_targets["careerbuilder"], run_careerbuilder),
     ]
     task_entries: list[tuple[OfferSource, int | None, asyncio.Task[list[ScrapedOffer]]]] = []
     stop_requested = False

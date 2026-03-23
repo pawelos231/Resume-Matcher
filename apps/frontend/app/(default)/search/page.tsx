@@ -2,20 +2,34 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { FormEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  FormEvent,
+  useDeferredValue,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardDescription, CardTitle } from '@/components/ui/card';
 import {
+  EMPTY_SEARCH_SCRAPED_BY_SOURCE,
   buildSearchScrapeUrl,
   fetchSearchScrape,
   generateJobDescriptionFromSearchOffer,
+  getCompanyInfoFromSearchOffer,
+  normalizeSearchProgressEvent,
+  normalizeSearchScrapeResponse,
   stopSearchScrape,
   type OfferSortBy,
   type OfferSortDirection,
   type OfferSource,
+  type SearchCompanyInfoResponse,
   type SearchDoneEvent,
   type SearchOffer,
+  type SearchWorkMode,
   type SearchProgressEvent,
   type SearchScrapeParams,
   type SearchScrapeResponse,
@@ -28,6 +42,7 @@ import {
   markOfferResumeGenerated,
   readOfferResumeMap,
   savePendingOfferMarker,
+  toJobOfferMarker,
   type OfferResumeMap,
 } from '@/lib/search-offer-resume-map';
 
@@ -45,6 +60,31 @@ type BulkGenerationProgress = {
   currentOfferLabel: string | null;
 };
 
+type CompanyContextSource = 'request' | 'cache' | 'none';
+type SelectableWorkMode = Exclude<SearchWorkMode, 'unknown'>;
+
+type CompanyInfoMap = Record<string, SearchCompanyInfoResponse>;
+type PersistedSearchControlsState = {
+  limit: number;
+  keywords: string;
+  keywordMode: 'and' | 'or';
+  salaryRangeOnly: boolean;
+  sortBy: OfferSortBy;
+  sortDirection: OfferSortDirection;
+  scrapeTimeoutSeconds: string;
+  sourceLimits: Record<OfferSource, string>;
+  tableSearchText: string;
+  selectedWorkModes: SelectableWorkMode[];
+  hideAppliedOffers: boolean;
+  pageSize: PageSizeOption;
+  currentPage: number;
+};
+type PersistedSearchResultsState = {
+  response: SearchScrapeResponse | null;
+  companyInfoByOfferKey: CompanyInfoMap;
+  companyInfoErrorsByOfferKey: Record<string, string>;
+};
+
 const SOURCE_CONFIG: Array<{
   key: OfferSource;
   label: string;
@@ -55,6 +95,12 @@ const SOURCE_CONFIG: Array<{
   { key: 'theprotocol', label: 'theprotocol.it' },
   { key: 'solidjobs', label: 'Solid.jobs' },
   { key: 'pracujpl', label: 'Pracuj.pl' },
+  { key: 'rocketjobs', label: 'RocketJobs' },
+  { key: 'olxpraca', label: 'OLX Praca' },
+  { key: 'indeed', label: 'Indeed' },
+  { key: 'glassdoor', label: 'Glassdoor' },
+  { key: 'ziprecruiter', label: 'ZipRecruiter' },
+  { key: 'careerbuilder', label: 'CareerBuilder' },
 ];
 
 const DEFAULT_SOURCE_LIMITS: Record<OfferSource, string> = {
@@ -64,22 +110,55 @@ const DEFAULT_SOURCE_LIMITS: Record<OfferSource, string> = {
   theprotocol: 'max',
   solidjobs: 'max',
   pracujpl: '50',
+  rocketjobs: '20',
+  olxpraca: '20',
+  indeed: '20',
+  glassdoor: '20',
+  ziprecruiter: '20',
+  careerbuilder: '20',
 };
 
-const EMPTY_SCRAPED_BY_SOURCE: Record<OfferSource, number> = {
-  nofluffjobs: 0,
-  justjoinit: 0,
-  bulldogjob: 0,
-  theprotocol: 0,
-  solidjobs: 0,
-  pracujpl: 0,
-};
-
-const MIN_SCRAPE_TIMEOUT_SECONDS = 15;
+const MIN_SCRAPE_TIMEOUT_SECONDS = 10;
 const MAX_SCRAPE_TIMEOUT_SECONDS = 600;
 const PAGE_SIZE_OPTIONS = [25, 50, 100, 'max'] as const;
+const FETCH_ADDITIONAL_COMPANY_INFO_STORAGE_KEY = 'search_fetch_additional_company_info_v2';
+const SEARCH_PAGE_CONTROLS_STORAGE_KEY = 'search_page_controls_v2';
+const SEARCH_PAGE_RESULTS_STORAGE_KEY = 'search_page_results_v2';
+const WORK_MODE_OPTIONS: Array<{
+  value: SelectableWorkMode;
+  label: string;
+  activeClassName: string;
+}> = [
+  { value: 'remote', label: 'Full remote', activeClassName: 'bg-[#1D4ED8] text-white' },
+  { value: 'hybrid', label: 'Hybrid', activeClassName: 'bg-[#F97316] text-black' },
+  { value: 'office', label: 'Office', activeClassName: 'bg-black text-white' },
+];
 
 type PageSizeOption = (typeof PAGE_SIZE_OPTIONS)[number];
+
+function readSessionStorageJson<T>(key: string): T | null {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+
+  try {
+    const rawValue = window.sessionStorage.getItem(key);
+    if (!rawValue) {
+      return null;
+    }
+    return JSON.parse(rawValue) as T;
+  } catch {
+    return null;
+  }
+}
+
+function isPageSizeOption(value: unknown): value is PageSizeOption {
+  return PAGE_SIZE_OPTIONS.some((option) => option === value);
+}
+
+function isSelectableWorkMode(value: unknown): value is SelectableWorkMode {
+  return WORK_MODE_OPTIONS.some((option) => option.value === value);
+}
 
 function parseScrapeTimeoutSeconds(value: string): number | undefined {
   const trimmed = value.trim();
@@ -95,18 +174,51 @@ function parseScrapeTimeoutSeconds(value: string): number | undefined {
   return Math.min(MAX_SCRAPE_TIMEOUT_SECONDS, Math.max(MIN_SCRAPE_TIMEOUT_SECONDS, parsed));
 }
 
-function filterOffers(offers: SearchOffer[], searchText: string): SearchOffer[] {
-  const normalized = searchText.trim().toLowerCase();
-  if (!normalized) {
-    return offers;
-  }
+function getOfferWorkMode(offer: Pick<SearchOffer, 'workMode'>): SearchWorkMode {
+  return offer.workMode ?? 'unknown';
+}
 
-  const tokens = normalized.split(/\s+/).filter(Boolean);
-  if (tokens.length === 0) {
+function formatWorkModeLabel(workMode: SearchWorkMode): string {
+  switch (workMode) {
+    case 'remote':
+      return 'Full remote';
+    case 'hybrid':
+      return 'Hybrid';
+    case 'office':
+      return 'Office';
+    default:
+      return 'Unknown';
+  }
+}
+
+function filterOffers(
+  offers: SearchOffer[],
+  searchText: string,
+  selectedWorkModes: SelectableWorkMode[]
+): SearchOffer[] {
+  const normalized = searchText.trim().toLowerCase();
+  const tokens = normalized ? normalized.split(/\s+/).filter(Boolean) : [];
+
+  if (!normalized && selectedWorkModes.length === 0) {
     return offers;
   }
 
   return offers.filter((offer) => {
+    const workMode = getOfferWorkMode(offer);
+    if (selectedWorkModes.length > 0) {
+      if (workMode === 'unknown' || !selectedWorkModes.includes(workMode)) {
+        return false;
+      }
+    }
+
+    if (!normalized) {
+      return true;
+    }
+
+    if (tokens.length === 0) {
+      return true;
+    }
+
     const searchable = [
       offer.id,
       offer.source,
@@ -116,6 +228,8 @@ function filterOffers(offers: SearchOffer[], searchText: string): SearchOffer[] 
       offer.salary ?? '',
       offer.skills.join(' '),
       offer.matchedKeywords.join(' '),
+      workMode,
+      formatWorkModeLabel(workMode),
       offer.url,
     ]
       .join(' ')
@@ -202,6 +316,36 @@ function formatSourceScrapeCount(scraped: number, requested: number | 'max'): st
   return requested === 'max' ? `${scraped} / max` : `${scraped} / ${requested}`;
 }
 
+function parseRequestedScrapeTargetLabel(
+  value: string | undefined,
+  fallback: string
+): number | 'max' {
+  const candidate = (value?.trim() || fallback).trim().toLowerCase();
+  if (candidate === 'max') {
+    return 'max';
+  }
+
+  const parsed = Number.parseInt(candidate, 10);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : parseRequestedScrapeTargetLabel(fallback, '0');
+}
+
+function buildRequestedScrapeFallback(
+  sourceLimits: Record<OfferSource, string>
+): Record<OfferSource, number | 'max'> {
+  return SOURCE_CONFIG.reduce(
+    (accumulator, source) => ({
+      ...accumulator,
+      [source.key]: parseRequestedScrapeTargetLabel(
+        sourceLimits[source.key],
+        DEFAULT_SOURCE_LIMITS[source.key]
+      ),
+    }),
+    {} as Record<OfferSource, number | 'max'>
+  );
+}
+
 function formatElapsedDuration(elapsedMs: number): string {
   const totalSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
   const hours = Math.floor(totalSeconds / 3600);
@@ -227,6 +371,8 @@ export default function SearchPage() {
   const router = useRouter();
   const activeEventSourceRef = useRef<{ close: () => void } | null>(null);
   const activeScrapeRequestIdRef = useRef<string | null>(null);
+  const hasHydratedPersistedSearchStateRef = useRef<boolean>(false);
+  const shouldSkipNextPageResetRef = useRef<boolean>(false);
 
   const [limit, setLimit] = useState<number>(1000);
   const [keywords, setKeywords] = useState<string>('react,node,typescript');
@@ -234,11 +380,13 @@ export default function SearchPage() {
   const [salaryRangeOnly, setSalaryRangeOnly] = useState<boolean>(false);
   const [sortBy, setSortBy] = useState<OfferSortBy>('relevance');
   const [sortDirection, setSortDirection] = useState<OfferSortDirection>('asc');
-  const [scrapeTimeoutSeconds, setScrapeTimeoutSeconds] = useState<string>('180');
+  const [scrapeTimeoutSeconds, setScrapeTimeoutSeconds] = useState<string>('10');
   const [sourceLimits, setSourceLimits] =
     useState<Record<OfferSource, string>>(DEFAULT_SOURCE_LIMITS);
   const [tableSearchText, setTableSearchText] = useState<string>('');
+  const [selectedWorkModes, setSelectedWorkModes] = useState<SelectableWorkMode[]>([]);
   const [hideAppliedOffers, setHideAppliedOffers] = useState<boolean>(false);
+  const [fetchAdditionalCompanyInfo, setFetchAdditionalCompanyInfo] = useState<boolean>(false);
   const [pageSize, setPageSize] = useState<PageSizeOption>(50);
   const [currentPage, setCurrentPage] = useState<number>(1);
 
@@ -248,6 +396,11 @@ export default function SearchPage() {
   const [bulkProgress, setBulkProgress] = useState<BulkGenerationProgress | null>(null);
   const [generatingEditOfferKey, setGeneratingEditOfferKey] = useState<string | null>(null);
   const [generatingOfferKey, setGeneratingOfferKey] = useState<string | null>(null);
+  const [companyInfoLoadingKey, setCompanyInfoLoadingKey] = useState<string | null>(null);
+  const [companyInfoByOfferKey, setCompanyInfoByOfferKey] = useState<CompanyInfoMap>({});
+  const [companyInfoErrorsByOfferKey, setCompanyInfoErrorsByOfferKey] = useState<
+    Record<string, string>
+  >({});
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [response, setResponse] = useState<SearchScrapeResponse | null>(null);
@@ -255,7 +408,7 @@ export default function SearchPage() {
   const [progressPercent, setProgressPercent] = useState<number>(0);
   const [progressMessage, setProgressMessage] = useState<string>('');
   const [progressBySource, setProgressBySource] = useState<Record<OfferSource, number>>({
-    ...EMPTY_SCRAPED_BY_SOURCE,
+    ...EMPTY_SEARCH_SCRAPED_BY_SOURCE,
   });
   const [activeScrapeRequestId, setActiveScrapeRequestId] = useState<string | null>(null);
   const [requestStartedAt, setRequestStartedAt] = useState<number | null>(null);
@@ -265,6 +418,104 @@ export default function SearchPage() {
   useEffect(() => {
     setOfferResumeMap(readOfferResumeMap());
   }, []);
+
+  useLayoutEffect(() => {
+    let hydratedSourceLimits: Record<OfferSource, string> = { ...DEFAULT_SOURCE_LIMITS };
+    const persistedControls = readSessionStorageJson<PersistedSearchControlsState>(
+      SEARCH_PAGE_CONTROLS_STORAGE_KEY
+    );
+    if (persistedControls) {
+      if (typeof persistedControls.limit === 'number' && Number.isFinite(persistedControls.limit)) {
+        setLimit(Math.max(1, persistedControls.limit));
+      }
+      if (typeof persistedControls.keywords === 'string') {
+        setKeywords(persistedControls.keywords);
+      }
+      if (persistedControls.keywordMode === 'and' || persistedControls.keywordMode === 'or') {
+        setKeywordMode(persistedControls.keywordMode);
+      }
+      if (typeof persistedControls.salaryRangeOnly === 'boolean') {
+        setSalaryRangeOnly(persistedControls.salaryRangeOnly);
+      }
+      if (
+        persistedControls.sortBy === 'relevance' ||
+        persistedControls.sortBy === 'name' ||
+        persistedControls.sortBy === 'salary'
+      ) {
+        setSortBy(persistedControls.sortBy);
+      }
+      if (persistedControls.sortDirection === 'asc' || persistedControls.sortDirection === 'desc') {
+        setSortDirection(persistedControls.sortDirection);
+      }
+      if (typeof persistedControls.scrapeTimeoutSeconds === 'string') {
+        setScrapeTimeoutSeconds(persistedControls.scrapeTimeoutSeconds);
+      }
+      if (persistedControls.sourceLimits && typeof persistedControls.sourceLimits === 'object') {
+        hydratedSourceLimits = {
+          ...DEFAULT_SOURCE_LIMITS,
+          ...persistedControls.sourceLimits,
+        };
+        setSourceLimits(hydratedSourceLimits);
+      }
+      if (typeof persistedControls.tableSearchText === 'string') {
+        setTableSearchText(persistedControls.tableSearchText);
+      }
+      if (Array.isArray(persistedControls.selectedWorkModes)) {
+        setSelectedWorkModes(
+          persistedControls.selectedWorkModes.filter((value) => isSelectableWorkMode(value))
+        );
+      }
+      if (typeof persistedControls.hideAppliedOffers === 'boolean') {
+        setHideAppliedOffers(persistedControls.hideAppliedOffers);
+      }
+      if (isPageSizeOption(persistedControls.pageSize)) {
+        setPageSize(persistedControls.pageSize);
+      }
+      if (
+        typeof persistedControls.currentPage === 'number' &&
+        Number.isFinite(persistedControls.currentPage)
+      ) {
+        setCurrentPage(Math.max(1, Math.floor(persistedControls.currentPage)));
+        shouldSkipNextPageResetRef.current = true;
+      }
+    }
+
+    const persistedResults = readSessionStorageJson<PersistedSearchResultsState>(
+      SEARCH_PAGE_RESULTS_STORAGE_KEY
+    );
+    if (persistedResults) {
+      setResponse(
+        normalizeSearchScrapeResponse(
+          persistedResults.response ?? null,
+          buildRequestedScrapeFallback(hydratedSourceLimits)
+        )
+      );
+      setCompanyInfoByOfferKey(persistedResults.companyInfoByOfferKey ?? {});
+      setCompanyInfoErrorsByOfferKey(persistedResults.companyInfoErrorsByOfferKey ?? {});
+    }
+
+    hasHydratedPersistedSearchStateRef.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const storedValue = window.localStorage.getItem(FETCH_ADDITIONAL_COMPANY_INFO_STORAGE_KEY);
+    setFetchAdditionalCompanyInfo(storedValue === 'true');
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    window.localStorage.setItem(
+      FETCH_ADDITIONAL_COMPANY_INFO_STORAGE_KEY,
+      fetchAdditionalCompanyInfo ? 'true' : 'false'
+    );
+  }, [fetchAdditionalCompanyInfo]);
 
   useEffect(() => {
     if (!loading || requestStartedAt === null) {
@@ -295,33 +546,166 @@ export default function SearchPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof window === 'undefined' || !hasHydratedPersistedSearchStateRef.current) {
+      return;
+    }
+
+    const payload: PersistedSearchControlsState = {
+      limit,
+      keywords,
+      keywordMode,
+      salaryRangeOnly,
+      sortBy,
+      sortDirection,
+      scrapeTimeoutSeconds,
+      sourceLimits,
+      tableSearchText,
+      selectedWorkModes,
+      hideAppliedOffers,
+      pageSize,
+      currentPage,
+    };
+
+    window.sessionStorage.setItem(SEARCH_PAGE_CONTROLS_STORAGE_KEY, JSON.stringify(payload));
+  }, [
+    hideAppliedOffers,
+    keywordMode,
+    keywords,
+    limit,
+    pageSize,
+    salaryRangeOnly,
+    scrapeTimeoutSeconds,
+    sortBy,
+    sortDirection,
+    sourceLimits,
+    selectedWorkModes,
+    tableSearchText,
+    currentPage,
+  ]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !hasHydratedPersistedSearchStateRef.current || loading) {
+      return;
+    }
+
+    const hasPersistedResults =
+      response !== null ||
+      Object.keys(companyInfoByOfferKey).length > 0 ||
+      Object.keys(companyInfoErrorsByOfferKey).length > 0;
+
+    if (!hasPersistedResults) {
+      window.sessionStorage.removeItem(SEARCH_PAGE_RESULTS_STORAGE_KEY);
+      return;
+    }
+
+    const payload: PersistedSearchResultsState = {
+      response,
+      companyInfoByOfferKey,
+      companyInfoErrorsByOfferKey,
+    };
+
+    window.sessionStorage.setItem(SEARCH_PAGE_RESULTS_STORAGE_KEY, JSON.stringify(payload));
+  }, [companyInfoByOfferKey, companyInfoErrorsByOfferKey, loading, response]);
+
   const sortedOffers = useMemo(
     () => sortOffers(response?.data ?? [], sortBy, sortDirection),
     [response, sortBy, sortDirection]
   );
+
+  const updateOfferInResponse = (
+    offer: Pick<SearchOffer, 'source' | 'id' | 'url'>,
+    updates: Partial<SearchOffer>
+  ): void => {
+    setResponse((previous) => {
+      if (!previous) {
+        return previous;
+      }
+
+      const runtimeKey = getOfferRuntimeKey(offer);
+      return {
+        ...previous,
+        data: previous.data.map((item) =>
+          getOfferRuntimeKey(item) === runtimeKey ? { ...item, ...updates } : item
+        ),
+      };
+    });
+  };
+
+  const hasGeneratedResumeForOffer = (offer: SearchOffer): boolean => {
+    const runtimeKey = getOfferRuntimeKey(offer);
+    return Boolean(
+      offer.generatedResumeId || offer.alreadyGeneratedResume || offerResumeMap[runtimeKey]
+    );
+  };
+
+  const hasGeneratedCompanyInfoForOffer = (offer: SearchOffer): boolean => {
+    const runtimeKey = getOfferRuntimeKey(offer);
+    return Boolean(offer.alreadyGeneratedCompanyInfo || companyInfoByOfferKey[runtimeKey]);
+  };
 
   const statusFilteredOffers = useMemo(() => {
     const offers = sortedOffers;
     if (!hideAppliedOffers) {
       return offers;
     }
-    return offers.filter((offer) => !offerResumeMap[getOfferRuntimeKey(offer)]);
+    return offers.filter((offer) => {
+      const runtimeKey = getOfferRuntimeKey(offer);
+      return !(
+        offer.generatedResumeId ||
+        offer.alreadyGeneratedResume ||
+        offerResumeMap[runtimeKey]
+      );
+    });
   }, [sortedOffers, hideAppliedOffers, offerResumeMap]);
 
   const appliedOffersCount = useMemo(() => {
     const offers = response?.data ?? [];
     return offers.reduce((count, offer) => {
-      return count + (offerResumeMap[getOfferRuntimeKey(offer)] ? 1 : 0);
+      const runtimeKey = getOfferRuntimeKey(offer);
+      return (
+        count +
+        (offer.generatedResumeId || offer.alreadyGeneratedResume || offerResumeMap[runtimeKey]
+          ? 1
+          : 0)
+      );
     }, 0);
   }, [response, offerResumeMap]);
 
+  const workModeCounts = useMemo(
+    () =>
+      statusFilteredOffers.reduce<Record<SelectableWorkMode, number>>(
+        (counts, offer) => {
+          const workMode = getOfferWorkMode(offer);
+          if (workMode !== 'unknown') {
+            counts[workMode] += 1;
+          }
+          return counts;
+        },
+        {
+          remote: 0,
+          hybrid: 0,
+          office: 0,
+        }
+      ),
+    [statusFilteredOffers]
+  );
+
   const displayedOffers = useMemo(
-    () => filterOffers(statusFilteredOffers, deferredTableSearchText),
-    [statusFilteredOffers, deferredTableSearchText]
+    () => filterOffers(statusFilteredOffers, deferredTableSearchText, selectedWorkModes),
+    [statusFilteredOffers, deferredTableSearchText, selectedWorkModes]
   );
 
   const bulkGenerationOffers = useMemo(
-    () => displayedOffers.filter((offer) => !offerResumeMap[getOfferRuntimeKey(offer)]),
+    () =>
+      displayedOffers.filter((offer) => {
+        const runtimeKey = getOfferRuntimeKey(offer);
+        return !(
+          offer.generatedResumeId ||
+          offer.alreadyGeneratedResume ||
+          offerResumeMap[runtimeKey]
+        );
+      }),
     [displayedOffers, offerResumeMap]
   );
 
@@ -367,8 +751,25 @@ export default function SearchPage() {
   }, [currentPage, displayedOffers.length, pageSize]);
 
   useEffect(() => {
+    if (!hasHydratedPersistedSearchStateRef.current) {
+      return;
+    }
+
+    if (shouldSkipNextPageResetRef.current) {
+      shouldSkipNextPageResetRef.current = false;
+      return;
+    }
+
     setCurrentPage(1);
-  }, [deferredTableSearchText, hideAppliedOffers, pageSize, response, sortBy, sortDirection]);
+  }, [
+    deferredTableSearchText,
+    hideAppliedOffers,
+    pageSize,
+    response,
+    selectedWorkModes,
+    sortBy,
+    sortDirection,
+  ]);
 
   useEffect(() => {
     setCurrentPage((previousPage) => Math.min(previousPage, totalPages));
@@ -388,16 +789,23 @@ export default function SearchPage() {
 
   const runScrapeFallback = async (requestId: string): Promise<void> => {
     const fallback = await fetchSearchScrape(buildScrapeParams(requestId));
+    const normalizedPayload = normalizeSearchScrapeResponse(
+      fallback.payload,
+      buildRequestedScrapeFallback(sourceLimits)
+    );
+    if (normalizedPayload === null) {
+      throw new Error('Could not normalize scrape response.');
+    }
 
-    setResponse(fallback.payload);
+    setResponse(normalizedPayload);
     setProgressPercent(100);
     setProgressMessage(
-      fallback.payload.meta.wasStopped
+      normalizedPayload.meta.wasStopped
         ? 'Scraping stopped. Returned partial results.'
         : 'Scraping completed'
     );
-    setProgressBySource(fallback.payload.meta.scrapedBySource);
-    if (fallback.payload.meta.wasStopped) {
+    setProgressBySource(normalizedPayload.meta.scrapedBySource);
+    if (normalizedPayload.meta.wasStopped) {
       setNotice('Scraping stopped. Returned partial results.');
     }
     if (fallback.status >= 400) {
@@ -441,11 +849,110 @@ export default function SearchPage() {
     return masterResumeId;
   };
 
-  const generateResumeForOffer = async (
+  const fetchCompanyInfoForOffer = async (
     offer: SearchOffer,
-    masterResumeId: string
-  ): Promise<string> => {
+    options?: { reportError?: boolean }
+  ): Promise<SearchCompanyInfoResponse> => {
+    const runtimeKey = getOfferRuntimeKey(offer);
+    const cachedCompanyInfo = companyInfoByOfferKey[runtimeKey];
+    if (cachedCompanyInfo) {
+      return cachedCompanyInfo;
+    }
+
+    const reportError = options?.reportError ?? true;
+    setCompanyInfoLoadingKey(runtimeKey);
+    if (reportError) {
+      setCompanyInfoErrorsByOfferKey((previous) => {
+        const next = { ...previous };
+        delete next[runtimeKey];
+        return next;
+      });
+    }
+
+    try {
+      const companyInfo = await getCompanyInfoFromSearchOffer({
+        id: offer.id,
+        source: offer.source,
+        title: offer.title,
+        company: offer.company,
+        location: offer.location,
+        salary: offer.salary,
+        url: offer.url,
+        skills: offer.skills,
+      });
+      setCompanyInfoByOfferKey((previous) => ({
+        ...previous,
+        [runtimeKey]: companyInfo,
+      }));
+      updateOfferInResponse(offer, {
+        alreadyGeneratedCompanyInfo: true,
+      });
+      return companyInfo;
+    } catch (companyInfoError) {
+      if (reportError) {
+        setCompanyInfoErrorsByOfferKey((previous) => ({
+          ...previous,
+          [runtimeKey]:
+            companyInfoError instanceof Error
+              ? companyInfoError.message
+              : 'Could not get company info for this offer.',
+        }));
+      }
+      throw companyInfoError;
+    } finally {
+      setCompanyInfoLoadingKey((current) => (current === runtimeKey ? null : current));
+    }
+  };
+
+  const buildCompanyInfoContextText = (companyInfo: SearchCompanyInfoResponse): string => {
+    const sections = [`Company summary:\n${companyInfo.summary.trim()}`];
+
+    if (companyInfo.highlights.length > 0) {
+      sections.push(
+        `Company highlights:\n${companyInfo.highlights
+          .slice(0, 5)
+          .map((highlight) => `- ${highlight}`)
+          .join('\n')}`
+      );
+    }
+
+    if (companyInfo.evidence.length > 0) {
+      sections.push(
+        `Supporting company context:\n${companyInfo.evidence
+          .slice(0, 2)
+          .map((item) => `- ${item.snippet}`)
+          .join('\n')}`
+      );
+    }
+
+    return sections.join('\n\n').trim();
+  };
+
+  const buildTailoringJobDescription = async (
+    offer: SearchOffer
+  ): Promise<{
+    jobDescription: string;
+    companyInfoAttempted: boolean;
+    companyContextSource: CompanyContextSource;
+  }> => {
+    let companyContext: string | null = null;
+    let companyInfoAttempted = false;
+
+    if (fetchAdditionalCompanyInfo) {
+      companyInfoAttempted = true;
+      try {
+        const companyInfo = await fetchCompanyInfoForOffer(offer, { reportError: false });
+        companyContext = buildCompanyInfoContextText(companyInfo);
+      } catch (companyInfoError) {
+        console.warn(
+          'Could not fetch additional company info for offer generation:',
+          companyInfoError
+        );
+      }
+    }
+
     const generated = await generateJobDescriptionFromSearchOffer({
+      id: offer.id,
       source: offer.source,
       title: offer.title,
       company: offer.company,
@@ -453,9 +960,30 @@ export default function SearchPage() {
       salary: offer.salary,
       url: offer.url,
       skills: offer.skills,
+      companyContext,
     });
 
-    const jobId = await uploadJobDescriptions([generated.jobDescription], masterResumeId);
+    return {
+      jobDescription: generated.jobDescription,
+      companyInfoAttempted,
+      companyContextSource: generated.companyContextSource,
+    };
+  };
+
+  const generateResumeForOffer = async (
+    offer: SearchOffer,
+    masterResumeId: string
+  ): Promise<{
+    companyInfoAttempted: boolean;
+    companyContextSource: CompanyContextSource;
+    resumeId: string;
+  }> => {
+    const tailoringPayload = await buildTailoringJobDescription(offer);
+    const jobId = await uploadJobDescriptions(
+      [tailoringPayload.jobDescription],
+      masterResumeId,
+      toJobOfferMarker(createOfferResumeMarker(offer))
+    );
     const improved = await improveResume(masterResumeId, jobId);
     const resumeId = improved?.data?.resume_id;
     if (!resumeId) {
@@ -465,7 +993,15 @@ export default function SearchPage() {
     const marker = createOfferResumeMarker(offer);
     const nextMap = markOfferResumeGenerated(marker, resumeId);
     setOfferResumeMap(nextMap);
-    return resumeId;
+    updateOfferInResponse(offer, {
+      alreadyGeneratedResume: true,
+      generatedResumeId: resumeId,
+    });
+    return {
+      companyInfoAttempted: tailoringPayload.companyInfoAttempted,
+      companyContextSource: tailoringPayload.companyContextSource,
+      resumeId,
+    };
   };
 
   const handleGenerateAndEditResumeFromOffer = async (offer: SearchOffer): Promise<void> => {
@@ -476,18 +1012,13 @@ export default function SearchPage() {
     setGeneratingEditOfferKey(runtimeKey);
     try {
       getMasterResumeId();
-      const generated = await generateJobDescriptionFromSearchOffer({
-        source: offer.source,
-        title: offer.title,
-        company: offer.company,
-        location: offer.location,
-        salary: offer.salary,
-        url: offer.url,
-        skills: offer.skills,
-      });
+      const tailoringPayload = await buildTailoringJobDescription(offer);
 
       if (typeof window !== 'undefined') {
-        window.sessionStorage.setItem('tailor_prefill_job_description', generated.jobDescription);
+        window.sessionStorage.setItem(
+          'tailor_prefill_job_description',
+          tailoringPayload.jobDescription
+        );
         savePendingOfferMarker(createOfferResumeMarker(offer));
       }
 
@@ -512,8 +1043,18 @@ export default function SearchPage() {
     setGeneratingOfferKey(runtimeKey);
     try {
       const masterResumeId = getMasterResumeId();
-      await generateResumeForOffer(offer, masterResumeId);
-      setNotice('Tailored resume generated for this offer.');
+      const generationResult = await generateResumeForOffer(offer, masterResumeId);
+      if (generationResult.companyContextSource === 'request') {
+        setNotice('Tailored resume generated from a combined offer and company description.');
+      } else if (generationResult.companyContextSource === 'cache') {
+        setNotice('Tailored resume generated using cached company info for this offer.');
+      } else if (generationResult.companyInfoAttempted) {
+        setNotice(
+          'Tailored resume generated from offer data; additional company info was unavailable.'
+        );
+      } else {
+        setNotice('Tailored resume generated for this offer.');
+      }
     } catch (generationError) {
       setError(
         generationError instanceof Error
@@ -522,6 +1063,17 @@ export default function SearchPage() {
       );
     } finally {
       setGeneratingOfferKey(null);
+    }
+  };
+
+  const handleGetCompanyInfo = async (offer: SearchOffer): Promise<void> => {
+    setError(null);
+    setNotice(null);
+
+    try {
+      await fetchCompanyInfoForOffer(offer, { reportError: true });
+    } catch {
+      // Inline company-info error state is already updated in fetchCompanyInfoForOffer.
     }
   };
 
@@ -617,6 +1169,13 @@ export default function SearchPage() {
       return;
     }
 
+    if (fetchAdditionalCompanyInfo) {
+      setNotice(
+        `Bulk generation finished. Generated ${success} tailored resumes using combined offer and company descriptions when available.`
+      );
+      return;
+    }
+
     setNotice(`Bulk generation finished. Generated ${success} tailored resumes.`);
   };
 
@@ -636,9 +1195,12 @@ export default function SearchPage() {
     setNotice(null);
     setError(null);
     setResponse(null);
+    setCompanyInfoByOfferKey({});
+    setCompanyInfoErrorsByOfferKey({});
+    setCompanyInfoLoadingKey(null);
     setProgressPercent(0);
     setProgressMessage('Starting scrape...');
-    setProgressBySource({ ...EMPTY_SCRAPED_BY_SOURCE });
+    setProgressBySource({ ...EMPTY_SEARCH_SCRAPED_BY_SOURCE });
     setActiveScrapeRequestId(requestId);
     setRequestStartedAt(startedAt);
     setElapsedRequestMs(0);
@@ -657,9 +1219,11 @@ export default function SearchPage() {
 
         eventSource.addEventListener('progress', (rawEvent) => {
           try {
-            const progressEvent = JSON.parse(
-              (rawEvent as MessageEvent).data
-            ) as SearchProgressEvent;
+            const progressEvent = normalizeSearchProgressEvent(
+              JSON.parse(
+                (rawEvent as MessageEvent).data
+              ) as SearchProgressEvent
+            );
             setProgressPercent(Math.max(0, Math.min(100, progressEvent.progressPercent)));
             setProgressMessage(progressEvent.message);
             setProgressBySource(progressEvent.scrapedBySource);
@@ -677,15 +1241,23 @@ export default function SearchPage() {
 
           try {
             const done = JSON.parse((rawEvent as MessageEvent).data) as SearchDoneEvent;
-            setResponse(done.payload);
+            const normalizedPayload = normalizeSearchScrapeResponse(
+              done.payload,
+              buildRequestedScrapeFallback(sourceLimits)
+            );
+            if (normalizedPayload === null) {
+              reject(new Error('Could not normalize scrape stream result.'));
+              return;
+            }
+            setResponse(normalizedPayload);
             setProgressPercent(100);
             setProgressMessage(
-              done.payload.meta.wasStopped
+              normalizedPayload.meta.wasStopped
                 ? 'Scraping stopped. Returned partial results.'
                 : 'Scraping completed'
             );
-            setProgressBySource(done.payload.meta.scrapedBySource);
-            if (done.payload.meta.wasStopped) {
+            setProgressBySource(normalizedPayload.meta.scrapedBySource);
+            if (normalizedPayload.meta.wasStopped) {
               setNotice('Scraping stopped. Returned partial results.');
             }
             if (done.status >= 400) {
@@ -743,7 +1315,8 @@ export default function SearchPage() {
               <CardTitle className="text-3xl md:text-4xl">Search</CardTitle>
               <CardDescription className="font-sans text-sm text-[#4B5563]">
                 Scraping ofert z providerow: NoFluffJobs, JustJoinIT, Bulldogjob, theprotocol.it,
-                Solid.jobs, Pracuj.pl.
+                Solid.jobs, Pracuj.pl, RocketJobs, OLX Praca, Indeed, Glassdoor, ZipRecruiter,
+                CareerBuilder.
               </CardDescription>
             </div>
             <Link href="/dashboard">
@@ -794,9 +1367,9 @@ export default function SearchPage() {
                   max={MAX_SCRAPE_TIMEOUT_SECONDS}
                   value={scrapeTimeoutSeconds}
                   onChange={(event) => setScrapeTimeoutSeconds(event.target.value)}
-                  placeholder="180"
-                />
-              </label>
+                    placeholder="10"
+                  />
+                </label>
 
               <label className="space-y-1">
                 <span className="font-mono text-xs uppercase tracking-wider text-black">
@@ -856,7 +1429,7 @@ export default function SearchPage() {
               ))}
             </div>
 
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex flex-col gap-3">
               <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-5">
                 <label className="flex items-center gap-2 font-mono text-xs uppercase tracking-wider text-black">
                   <input
@@ -878,41 +1451,82 @@ export default function SearchPage() {
                 </label>
               </div>
 
-              <Button
-                type="submit"
-                disabled={loading || isBulkGenerating}
-                className="min-w-[180px]"
-              >
-                {loading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Scraping
-                  </>
-                ) : (
-                  <>
-                    <SearchIcon className="h-4 w-4" />
-                    Run Search
-                  </>
-                )}
-              </Button>
-              {loading && (
+              <div className="border-2 border-black bg-[#F0F0E8] p-4 shadow-[4px_4px_0px_0px_#000000]">
+                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="space-y-1">
+                    <p className="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8]">
+                      Resume generation option
+                    </p>
+                    <p className="font-sans text-sm text-[#4B5563]">
+                      Fetch additional company info before generating or prefilling a tailored
+                      resume.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={fetchAdditionalCompanyInfo}
+                    disabled={Boolean(
+                      isBulkGenerating ||
+                      generatingOfferKey ||
+                      generatingEditOfferKey ||
+                      companyInfoLoadingKey
+                    )}
+                    onClick={() => setFetchAdditionalCompanyInfo((previous) => !previous)}
+                    className={`inline-flex items-center gap-3 self-start border-2 border-black px-3 py-2 font-mono text-[11px] uppercase tracking-wider transition-all lg:self-auto ${
+                      fetchAdditionalCompanyInfo
+                        ? 'bg-[#1D4ED8] text-white shadow-[2px_2px_0px_0px_#000000]'
+                        : 'bg-white text-black shadow-[2px_2px_0px_0px_#000000]'
+                    } disabled:cursor-not-allowed disabled:opacity-50`}
+                  >
+                    <span>{fetchAdditionalCompanyInfo ? 'On' : 'Off'}</span>
+                    <span
+                      className={`h-4 w-4 border border-black ${
+                        fetchAdditionalCompanyInfo ? 'bg-white' : 'bg-[#E5E5E0]'
+                      }`}
+                    />
+                    <span>Fetch additional company info</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 md:flex-row md:items-center">
                 <Button
-                  type="button"
-                  variant="warning"
-                  onClick={() => void handleStopScraping()}
-                  disabled={isStoppingScrape || !activeScrapeRequestId}
+                  type="submit"
+                  disabled={loading || isBulkGenerating}
                   className="min-w-[180px]"
                 >
-                  {isStoppingScrape ? (
+                  {loading ? (
                     <>
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Stopping
+                      Scraping
                     </>
                   ) : (
-                    'Stop Scrape'
+                    <>
+                      <SearchIcon className="h-4 w-4" />
+                      Run Search
+                    </>
                   )}
                 </Button>
-              )}
+                {loading && (
+                  <Button
+                    type="button"
+                    variant="warning"
+                    onClick={() => void handleStopScraping()}
+                    disabled={isStoppingScrape || !activeScrapeRequestId}
+                    className="min-w-[180px]"
+                  >
+                    {isStoppingScrape ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Stopping
+                      </>
+                    ) : (
+                      'Stop Scrape'
+                    )}
+                  </Button>
+                )}
+              </div>
             </div>
           </form>
         </Card>
@@ -1064,6 +1678,46 @@ export default function SearchPage() {
                     ))}
                   </select>
                 </label>
+                <div className="space-y-2 md:col-span-2">
+                  <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+                    <span className="font-mono text-xs uppercase tracking-wider text-black">
+                      Work mode
+                    </span>
+                    <p className="font-mono text-[11px] uppercase tracking-wider text-[#4B5563]">
+                      {selectedWorkModes.length === 0
+                        ? 'Showing all work modes'
+                        : `Selected: ${selectedWorkModes
+                            .map((workMode) => formatWorkModeLabel(workMode))
+                            .join(', ')}`}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {WORK_MODE_OPTIONS.map((option) => {
+                      const isSelected = selectedWorkModes.includes(option.value);
+                      const count = workModeCounts[option.value];
+
+                      return (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() =>
+                            setSelectedWorkModes((previous) =>
+                              previous.includes(option.value)
+                                ? previous.filter((item) => item !== option.value)
+                                : [...previous, option.value]
+                            )
+                          }
+                          disabled={count === 0 && !isSelected}
+                          className={`rounded-none border-2 border-black px-3 py-2 font-mono text-[11px] uppercase tracking-wider shadow-[2px_2px_0px_0px_#000000] transition-all hover:translate-y-[1px] hover:translate-x-[1px] hover:shadow-none disabled:cursor-not-allowed disabled:bg-white disabled:text-[#4B5563] disabled:shadow-none ${
+                            isSelected ? option.activeClassName : 'bg-[#F0F0E8] text-black'
+                          }`}
+                        >
+                          {option.label} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
               </div>
               <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <label className="flex items-center gap-2 font-mono text-xs uppercase tracking-wider text-black">
@@ -1141,18 +1795,33 @@ export default function SearchPage() {
               <div className="space-y-3">
                 {pagedOffers.map((offer) => {
                   const runtimeKey = getOfferRuntimeKey(offer);
-                  const alreadyApplied = Boolean(offerResumeMap[runtimeKey]);
+                  const offerWorkMode = getOfferWorkMode(offer);
+                  const alreadyApplied = hasGeneratedResumeForOffer(offer);
+                  const alreadyGeneratedCompanyInfo = hasGeneratedCompanyInfoForOffer(offer);
+                  const companyInfo = companyInfoByOfferKey[runtimeKey];
+                  const companyInfoError = companyInfoErrorsByOfferKey[runtimeKey];
+                  const isCompanyInfoLoading = companyInfoLoadingKey === runtimeKey;
+                  const hasStatusBadges = alreadyApplied || alreadyGeneratedCompanyInfo;
 
                   return (
                     <Card
                       key={`${offer.source}-${offer.id}-${offer.url}`}
                       className="border-2 border-black bg-white shadow-[4px_4px_0px_0px_#000000]"
                     >
-                      <div className={`relative space-y-2 ${alreadyApplied ? 'pt-6' : ''}`}>
-                        {alreadyApplied && (
-                          <span className="absolute right-0 top-0 border border-black bg-[#15803D] px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-white">
-                            Already Applied
-                          </span>
+                      <div className={`relative space-y-2 ${hasStatusBadges ? 'pt-12' : ''}`}>
+                        {hasStatusBadges && (
+                          <div className="absolute right-0 top-0 flex flex-col items-end gap-1">
+                            {alreadyApplied && (
+                              <span className="border border-black bg-[#15803D] px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-white">
+                                Already Applied
+                              </span>
+                            )}
+                            {alreadyGeneratedCompanyInfo && (
+                              <span className="border border-black bg-[#1D4ED8] px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-white">
+                                Already Generated Company Info
+                              </span>
+                            )}
+                          </div>
                         )}
                         <p className="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8]">
                           {offer.source}
@@ -1162,10 +1831,19 @@ export default function SearchPage() {
                           {offer.company}
                           {offer.location ? ` - ${offer.location}` : ''}
                         </p>
-                        {offer.salary && (
-                          <p className="font-mono text-xs uppercase tracking-wider text-[#15803D]">
-                            {offer.salary}
-                          </p>
+                        {(offer.salary || offerWorkMode !== 'unknown') && (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {offer.salary && (
+                              <p className="font-mono text-xs uppercase tracking-wider text-[#15803D]">
+                                {offer.salary}
+                              </p>
+                            )}
+                            {offerWorkMode !== 'unknown' && (
+                              <span className="border border-black bg-[#F0F0E8] px-2 py-1 font-mono text-[10px] uppercase tracking-wider text-black">
+                                {formatWorkModeLabel(offerWorkMode)}
+                              </span>
+                            )}
+                          </div>
                         )}
                         {offer.skills.length > 0 && (
                           <p className="font-sans text-sm text-[#4B5563]">
@@ -1212,6 +1890,27 @@ export default function SearchPage() {
                               'Generate Resume'
                             )}
                           </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => void handleGetCompanyInfo(offer)}
+                            disabled={Boolean(
+                              isBulkGenerating ||
+                              generatingOfferKey ||
+                              generatingEditOfferKey ||
+                              companyInfoLoadingKey
+                            )}
+                          >
+                            {isCompanyInfoLoading ? (
+                              <>
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Getting Company Info
+                              </>
+                            ) : (
+                              'Get Company Info'
+                            )}
+                          </Button>
                           <a
                             href={offer.url}
                             target="_blank"
@@ -1222,6 +1921,132 @@ export default function SearchPage() {
                             <ExternalLink className="h-3.5 w-3.5" />
                           </a>
                         </div>
+                        {(companyInfo || companyInfoError || isCompanyInfoLoading) && (
+                          <div className="mt-4 border-t-2 border-black pt-4">
+                            <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(240px,1fr)]">
+                              <div className="space-y-3">
+                                <div className="space-y-1">
+                                  <p className="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8]">
+                                    Company Intelligence
+                                  </p>
+                                  {isCompanyInfoLoading ? (
+                                    <p className="font-sans text-sm text-[#4B5563]">
+                                      Crawling the company site, chunking content, and extracting
+                                      the most relevant fragments.
+                                    </p>
+                                  ) : companyInfoError ? (
+                                    <p className="font-sans text-sm text-[#DC2626]">
+                                      {companyInfoError}
+                                    </p>
+                                  ) : (
+                                    <p className="font-sans text-sm leading-6 text-black">
+                                      {companyInfo?.summary ?? ''}
+                                    </p>
+                                  )}
+                                </div>
+
+                                {companyInfo && companyInfo.highlights.length > 0 && (
+                                  <ul className="space-y-2">
+                                    {companyInfo.highlights.map((highlight, index) => (
+                                      <li
+                                        key={`${runtimeKey}-highlight-${index}`}
+                                        className="border border-black bg-[#F0F0E8] px-3 py-2 font-sans text-sm text-black"
+                                      >
+                                        {highlight}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+
+                                {companyInfo && companyInfo.evidence.length > 0 && (
+                                  <div className="space-y-2">
+                                    <p className="font-mono text-[11px] uppercase tracking-wider text-[#4B5563]">
+                                      Evidence
+                                    </p>
+                                    {companyInfo.evidence.map((item, index) => (
+                                      <div
+                                        key={`${runtimeKey}-evidence-${index}`}
+                                        className="border border-black px-3 py-2"
+                                      >
+                                        <p className="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8]">
+                                          {item.title || item.url}
+                                        </p>
+                                        <p className="mt-1 font-sans text-sm text-[#4B5563]">
+                                          {item.snippet}
+                                        </p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              {companyInfo && (
+                                <div className="space-y-3 border-2 border-black bg-[#F0F0E8] p-4">
+                                  <div className="space-y-1">
+                                    <p className="font-mono text-[11px] uppercase tracking-wider text-[#4B5563]">
+                                      Resolved Website
+                                    </p>
+                                    {companyInfo.websiteUrl ? (
+                                      <a
+                                        href={companyInfo.websiteUrl}
+                                        target="_blank"
+                                        rel="noreferrer noopener"
+                                        className="font-sans text-sm text-[#1D4ED8] underline"
+                                      >
+                                        {companyInfo.websiteUrl}
+                                      </a>
+                                    ) : (
+                                      <p className="font-sans text-sm text-[#4B5563]">
+                                        Not resolved
+                                      </p>
+                                    )}
+                                  </div>
+                                  <div className="space-y-1">
+                                    <p className="font-mono text-[11px] uppercase tracking-wider text-[#4B5563]">
+                                      Crawl Stats
+                                    </p>
+                                    <p className="font-sans text-sm text-black">
+                                      Pages: {companyInfo.stats.pagesVisited}
+                                    </p>
+                                    <p className="font-sans text-sm text-black">
+                                      Chunks: {companyInfo.stats.chunksIndexed}
+                                    </p>
+                                    <p className="font-sans text-sm text-black">
+                                      Top-k: {companyInfo.stats.relevantChunks}
+                                    </p>
+                                    <p className="font-sans text-sm text-black">
+                                      Retrieval: {companyInfo.stats.retrievalMethod}
+                                    </p>
+                                    <p className="font-sans text-sm text-black">
+                                      LLM extraction: {companyInfo.stats.usedLlm ? 'yes' : 'no'}
+                                    </p>
+                                    <p className="font-sans text-sm text-black">
+                                      Found via: {companyInfo.websiteFoundVia.replace('_', ' ')}
+                                    </p>
+                                  </div>
+                                  {companyInfo.sourcePages.length > 0 && (
+                                    <div className="space-y-1">
+                                      <p className="font-mono text-[11px] uppercase tracking-wider text-[#4B5563]">
+                                        Source Pages
+                                      </p>
+                                      {companyInfo.sourcePages.map((page, index) => (
+                                        <a
+                                          key={`${runtimeKey}-source-page-${index}`}
+                                          href={page.url}
+                                          target="_blank"
+                                          rel="noreferrer noopener"
+                                          className="block font-sans text-sm text-[#1D4ED8] underline"
+                                        >
+                                          {page.title || page.url}
+                                        </a>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </Card>
                   );

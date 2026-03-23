@@ -23,9 +23,12 @@ async def upload_job_descriptions(request: JobUploadRequest) -> JobUploadRespons
         if not jd.strip():
             raise HTTPException(status_code=400, detail="Empty job description")
 
-        job = db.create_job(
+        job = db.create_job_with_offer_marker(
             content=jd.strip(),
             resume_id=request.resume_id,
+            offer_marker=(
+                request.offerMarker.model_dump() if request.offerMarker is not None else None
+            ),
         )
         job_ids.append(job["job_id"])
 
@@ -35,6 +38,9 @@ async def upload_job_descriptions(request: JobUploadRequest) -> JobUploadRespons
         request={
             "job_descriptions": request.job_descriptions,
             "resume_id": request.resume_id,
+            "offerMarker": (
+                request.offerMarker.model_dump() if request.offerMarker is not None else None
+            ),
         },
     )
 

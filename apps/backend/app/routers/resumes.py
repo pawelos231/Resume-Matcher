@@ -53,6 +53,7 @@ from app.services.cover_letter import (
     generate_outreach_message,
     generate_resume_title,
 )
+from app.services.resume_categorization import categorize_resume_record
 from app.prompts import DEFAULT_IMPROVE_PROMPT_ID, IMPROVE_PROMPT_OPTIONS
 
 
@@ -184,6 +185,34 @@ def _raise_improve_error(
 ) -> NoReturn:
     logger.error("Resume %s failed during %s: %s", action, stage, error)
     raise HTTPException(status_code=500, detail=detail)
+
+
+def _cache_generated_resume_for_job(
+    job: dict[str, Any],
+    tailored_resume_id: str,
+) -> None:
+    """Persist the offer-to-resume mapping when a tailored resume is created."""
+    offer_marker = job.get("offer_marker")
+    if not isinstance(offer_marker, dict):
+        return
+
+    offer_key = str(offer_marker.get("offerKey", "")).strip()
+    if not offer_key:
+        return
+
+    try:
+        db.upsert_offer_resume_cache(
+            offer_key=offer_key,
+            resume_id=tailored_resume_id,
+            offer_marker=offer_marker,
+        )
+    except Exception as exc:
+        logger.warning(
+            "Failed to persist offer resume cache. offer_key=%s resume_id=%s error=%s",
+            offer_key,
+            tailored_resume_id,
+            exc,
+        )
 
 
 def _get_original_resume_data(resume: dict[str, Any]) -> dict[str, Any] | None:
@@ -529,23 +558,27 @@ async def list_resumes(include_master: bool = Query(False)) -> ResumeListRespons
 
     resumes.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
 
-    summaries = [
-        ResumeSummary(
-            resume_id=resume["resume_id"],
-            filename=resume.get("filename"),
-            is_master=resume.get("is_master", False),
-            parent_id=resume.get("parent_id"),
-            processing_status=resume.get("processing_status", "pending"),
-            created_at=resume.get("created_at", ""),
-            updated_at=resume.get("updated_at", ""),
-            title=resume.get("title"),
-            cover_letter_preview=_build_preview_text(resume.get("cover_letter")),
-            outreach_message_preview=_build_preview_text(
-                resume.get("outreach_message")
-            ),
+    summaries: list[ResumeSummary] = []
+    for resume in resumes:
+        categories, primary_category = categorize_resume_record(resume)
+        summaries.append(
+            ResumeSummary(
+                resume_id=resume["resume_id"],
+                filename=resume.get("filename"),
+                is_master=resume.get("is_master", False),
+                parent_id=resume.get("parent_id"),
+                processing_status=resume.get("processing_status", "pending"),
+                created_at=resume.get("created_at", ""),
+                updated_at=resume.get("updated_at", ""),
+                title=resume.get("title"),
+                cover_letter_preview=_build_preview_text(resume.get("cover_letter")),
+                outreach_message_preview=_build_preview_text(
+                    resume.get("outreach_message")
+                ),
+                categories=categories,
+                primary_category=primary_category,
+            )
         )
-        for resume in resumes
-    ]
 
     return ResumeListResponse(request_id=str(uuid4()), data=summaries)
 
@@ -836,6 +869,7 @@ async def improve_resume_confirm_endpoint(
             outreach_message=outreach_message,
             title=title,
         )
+        _cache_generated_resume_for_job(job, tailored_resume["resume_id"])
 
         improvements_payload = [imp.model_dump() for imp in request.improvements]
         stage = "create_improvement"
@@ -1018,6 +1052,7 @@ async def improve_resume_endpoint(
             outreach_message=outreach_message,
             title=title,
         )
+        _cache_generated_resume_for_job(job, tailored_resume["resume_id"])
 
         # Store improvement record
         request_id = str(uuid4())
@@ -1201,6 +1236,7 @@ async def delete_resume(resume_id: str) -> dict:
     """Delete a resume by ID."""
     if not db.delete_resume(resume_id):
         raise HTTPException(status_code=404, detail="Resume not found")
+    db.delete_offer_resume_cache_by_resume_id(resume_id)
 
     return {"message": "Resume deleted successfully"}
 

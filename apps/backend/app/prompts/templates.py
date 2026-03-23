@@ -7,6 +7,7 @@ LANGUAGE_NAMES = {
     "zh": "Chinese (Simplified)",
     "ja": "Japanese",
     "pt": "Brazilian Portuguese",
+    "pl": "Polish",
 }
 
 
@@ -350,6 +351,128 @@ Guidelines:
 - Do NOT include placeholder brackets
 - Do NOT use phrases like "excited about" or "passionate about"
 - Do NOT use em dash ("—") anywhere in the writing/output, even if it exists, remove it
+
+Output plain text only. No JSON, no markdown formatting."""
+
+# Refined versions used for company-aware cover letter and outreach generation.
+COVER_LETTER_PROMPT = """Write a brief cover letter for this job application.
+
+IMPORTANT: Write in {output_language}.
+
+Job Description:
+{job_description}
+
+Candidate Resume (JSON):
+{resume_data}
+
+Requirements:
+- 100-150 words maximum
+- 3-4 short paragraphs
+- Make it clear, in a subtle way, that the candidate understands what the company does, what it builds, or what business/problem space it operates in
+- Weave company context in naturally: refer to the product, users, domain, technical environment, or operational challenge mentioned in the job description
+- Opening: Reference ONE specific company/product/domain/technical detail from the job description, not generic excitement about "the role"
+- Middle: Pick 1-2 qualifications from resume that DIRECTLY match stated requirements and explain why they matter in this company's context
+- Include at least one sentence that connects the candidate's background to what this company is building or operating
+- Closing: Simple availability to discuss, plus one grounded sentence about the type of contribution the candidate could make in this environment
+- If resume shows career transition, frame the pivot as intentional and relevant
+- Extract company name from job description - do not use placeholders
+- If company context is present, use concrete nouns from it instead of vague phrases like "innovative company" or "exciting opportunity"
+- If company activity is not clearly described, fall back to the team, stack, workflow, or problem described in the job description
+- ABSOLUTE HONESTY: Do NOT lie or fabricate facts
+- Do NOT claim any skill, achievement, metric, tool, responsibility, date, or experience that is not supported by the resume
+- If evidence is missing in the resume, OMIT that claim instead of guessing
+- You may lightly polish wording/tone ("podkoloryzowac"), but factual content must remain true to the resume
+- Tone: Confident peer, not eager applicant
+- Tone should feel informed, specific, and composed; never flatter the company or sound like a generic template
+- Do NOT use em dash ("â€”") anywhere in the writing/output, even if it exists, remove it
+
+Output plain text only. No JSON, no markdown formatting."""
+
+OUTREACH_MESSAGE_PROMPT = """Generate a cold outreach message for LinkedIn or email about this job opportunity.
+
+IMPORTANT: Write in {output_language}.
+
+Job Description:
+{job_description}
+
+Candidate Resume (JSON):
+{resume_data}
+
+Guidelines:
+- 70-100 words maximum (shorter than a cover letter)
+- Make it obvious, in a subtle way, that the sender understands what the company does, what it builds, or what kind of environment it operates in
+- First sentence: Reference a specific company/product/domain/technical detail from the job description; never open with "I'm reaching out" or "I saw your posting"
+- Include one compact sentence on the strongest matching qualification from the resume and why it is relevant to this company's work
+- Subtly imply familiarity with the business, users, or engineering environment described in the job description
+- End with a low-friction ask such as "Worth a quick chat?" or equivalent, not "I'd love the opportunity to discuss"
+- Tone: How you'd message a former colleague, not a stranger
+- Do NOT include placeholder brackets
+- Do NOT use phrases like "excited about" or "passionate about"
+- Do NOT write generic compliments like "your impressive company" or "your innovative team"
+- If company context is present, prefer concrete nouns from it; if not, anchor on the product, team, stack, or challenge described
+- Keep it concise but descriptive enough that it is clearly tailored to this company, not reusable boilerplate
+- Do NOT use em dash ("â€”") anywhere in the writing/output, even if it exists, remove it
+
+Output plain text only. No JSON, no markdown formatting."""
+
+# Final active versions with ASCII-safe wording.
+COVER_LETTER_PROMPT = """Write a brief cover letter for this job application.
+
+IMPORTANT: Write in {output_language}.
+
+Job Description:
+{job_description}
+
+Candidate Resume (JSON):
+{resume_data}
+
+Requirements:
+- 100-150 words maximum
+- 3-4 short paragraphs
+- Make it clear, in a subtle way, that the candidate understands what the company does, what it builds, or what business or problem space it operates in
+- Weave company context in naturally: refer to the product, users, domain, technical environment, or operational challenge mentioned in the job description
+- Opening: Reference ONE specific company, product, domain, or technical detail from the job description, not generic excitement about "the role"
+- Middle: Pick 1-2 qualifications from resume that directly match stated requirements and explain why they matter in this company's context
+- Include at least one sentence that connects the candidate's background to what this company is building or operating
+- Closing: Simple availability to discuss, plus one grounded sentence about the type of contribution the candidate could make in this environment
+- If resume shows career transition, frame the pivot as intentional and relevant
+- Extract company name from job description; do not use placeholders
+- If company context is present, use concrete nouns from it instead of vague phrases like "innovative company" or "exciting opportunity"
+- If company activity is not clearly described, fall back to the team, stack, workflow, or problem described in the job description
+- ABSOLUTE HONESTY: Do NOT lie or fabricate facts
+- Do NOT claim any skill, achievement, metric, tool, responsibility, date, or experience that is not supported by the resume
+- If evidence is missing in the resume, omit that claim instead of guessing
+- You may lightly polish wording and tone, but factual content must remain true to the resume
+- Tone: confident peer, not eager applicant
+- Tone should feel informed, specific, and composed; never flatter the company or sound like a generic template
+- Do NOT use em dash characters anywhere in the writing or output; remove them if present
+
+Output plain text only. No JSON, no markdown formatting."""
+
+OUTREACH_MESSAGE_PROMPT = """Generate a cold outreach message for LinkedIn or email about this job opportunity.
+
+IMPORTANT: Write in {output_language}.
+
+Job Description:
+{job_description}
+
+Candidate Resume (JSON):
+{resume_data}
+
+Guidelines:
+- 70-100 words maximum, shorter than a cover letter
+- Make it obvious, in a subtle way, that the sender understands what the company does, what it builds, or what kind of environment it operates in
+- First sentence: Reference a specific company, product, domain, or technical detail from the job description; never open with "I'm reaching out" or "I saw your posting"
+- Include one compact sentence on the strongest matching qualification from the resume and why it is relevant to this company's work
+- Subtly imply familiarity with the business, users, or engineering environment described in the job description
+- End with a low-friction ask such as "Worth a quick chat?" or equivalent, not "I'd love the opportunity to discuss"
+- Tone: how you would message a former colleague, not a stranger
+- Do NOT include placeholder brackets
+- Do NOT use phrases like "excited about" or "passionate about"
+- Do NOT write generic compliments like "your impressive company" or "your innovative team"
+- If company context is present, prefer concrete nouns from it; if not, anchor on the product, team, stack, or challenge described
+- Keep it concise but descriptive enough that it is clearly tailored to this company, not reusable boilerplate
+- Do NOT use em dash characters anywhere in the writing or output; remove them if present
 
 Output plain text only. No JSON, no markdown formatting."""
 

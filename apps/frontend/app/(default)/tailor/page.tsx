@@ -25,6 +25,7 @@ import {
   clearPendingOfferMarker,
   markOfferResumeGenerated,
   readPendingOfferMarker,
+  toJobOfferMarker,
   type OfferResumeMarker,
 } from '@/lib/search-offer-resume-map';
 
@@ -259,7 +260,11 @@ export default function TailorPage() {
     try {
       // 1. Upload Job Description
       // The API expects an array of strings
-      const jobId = await uploadJobDescriptions([description], resumeId);
+      const jobId = await uploadJobDescriptions(
+        [description],
+        resumeId,
+        prefillOfferMarker.current ? toJobOfferMarker(prefillOfferMarker.current) : undefined
+      );
       incrementJobs(); // Update cached counter
 
       // 2. Preview Resume

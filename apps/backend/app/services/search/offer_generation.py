@@ -24,6 +24,7 @@ REQUEST_HEADERS = {
 PAGE_FETCH_TIMEOUT_MS = 20_000
 MAX_SOURCE_TEXT_CHARS = 20_000
 MAX_PROMPT_SOURCE_CHARS = 14_000
+MAX_PROMPT_COMPANY_CONTEXT_CHARS = 4_000
 MIN_VALID_LLM_OUTPUT_CHARS = 120
 MAX_FALLBACK_EXCERPT_CHARS = 2_500
 
@@ -35,6 +36,12 @@ SOURCE_LABELS: dict[OfferSource, str] = {
     "theprotocol": "theprotocol.it",
     "solidjobs": "Solid.jobs",
     "pracujpl": "Pracuj.pl",
+    "rocketjobs": "RocketJobs",
+    "olxpraca": "OLX Praca",
+    "indeed": "Indeed",
+    "glassdoor": "Glassdoor",
+    "ziprecruiter": "ZipRecruiter",
+    "careerbuilder": "CareerBuilder",
 }
 
 
@@ -49,6 +56,7 @@ class OfferJobDescriptionInput:
     salary: str | None
     url: str
     skills: list[str]
+    company_context: str | None = None
 
 
 def _clean_text(value: str) -> str:
@@ -62,6 +70,12 @@ def _normalize_multiline_text(value: str) -> str:
         if cleaned:
             lines.append(cleaned)
     return "\n".join(lines)
+
+
+def _normalize_company_context(value: str | None) -> str:
+    if value is None:
+        return ""
+    return _normalize_multiline_text(value)[:MAX_PROMPT_COMPANY_CONTEXT_CHARS]
 
 
 def _validate_offer_url(url: str) -> str:
@@ -152,6 +166,7 @@ def _build_generation_prompt(
     extracted_offer_text: str,
 ) -> str:
     source_excerpt = extracted_offer_text[:MAX_PROMPT_SOURCE_CHARS]
+    company_context = _normalize_company_context(offer.company_context)
     return (
         "Create a concise, resume-tailoring-ready job description based only on provided data.\n"
         "Do not invent facts.\n"
@@ -159,12 +174,15 @@ def _build_generation_prompt(
         "Output plain text only (no markdown).\n"
         "Output exactly 6 or 7 complete sentences.\n"
         "Do not use bullet points, numbering, section headers, or list formatting.\n"
-        "Write it as one short coherent description of the role, responsibilities, skills, stack, and work conditions.\n"
+        "Write it as one short coherent description of the role, responsibilities, skills, stack, work conditions, and employer context.\n"
+        "Blend together the scraped offer summary, the extracted offer-page text, and any company context into one unified job description.\n"
         "If data is missing, mention that it is not specified within a sentence.\n\n"
         "=== Scraped offer summary ===\n"
         f"{_to_offer_metadata_block(offer)}\n\n"
         "=== Extracted offer page text ===\n"
-        f"{source_excerpt or 'No page text available.'}\n"
+        f"{source_excerpt or 'No page text available.'}\n\n"
+        "=== Additional company context ===\n"
+        f"{company_context or 'No company context available.'}\n"
     )
 
 
@@ -174,6 +192,9 @@ def _build_fallback_job_description(
 ) -> str:
     skill_text = ", ".join(skill for skill in offer.skills if _clean_text(skill))
     excerpt = _clean_text(extracted_offer_text[:MAX_FALLBACK_EXCERPT_CHARS])
+    company_context_excerpt = _clean_text(
+        _normalize_company_context(offer.company_context)[:420]
+    )
     location = _clean_text(offer.location) or "not specified"
     salary = _clean_text(offer.salary or "") or "not specified"
     source_label = SOURCE_LABELS[offer.source]
@@ -189,6 +210,11 @@ def _build_fallback_job_description(
     if excerpt:
         base_sentences.append(
             f"Additional context from the posting suggests: {excerpt[:280]}."
+        )
+
+    if company_context_excerpt:
+        base_sentences.append(
+            f"Relevant employer context indicates: {company_context_excerpt}."
         )
 
     base_sentences.append(
@@ -268,6 +294,7 @@ async def generate_job_description_from_offer(
         salary=offer.salary,
         url=normalized_url,
         skills=offer.skills,
+        company_context=_normalize_company_context(offer.company_context),
     )
 
     extracted_offer_text = ""

@@ -6,11 +6,18 @@ export type OfferSource =
   | 'bulldogjob'
   | 'theprotocol'
   | 'solidjobs'
-  | 'pracujpl';
+  | 'pracujpl'
+  | 'rocketjobs'
+  | 'olxpraca'
+  | 'indeed'
+  | 'glassdoor'
+  | 'ziprecruiter'
+  | 'careerbuilder';
 
 export type KeywordMode = 'and' | 'or';
 export type OfferSortBy = 'relevance' | 'name' | 'salary';
 export type OfferSortDirection = 'asc' | 'desc';
+export type SearchWorkMode = 'remote' | 'hybrid' | 'office' | 'unknown';
 
 export type SearchOffer = {
   id: string;
@@ -22,6 +29,10 @@ export type SearchOffer = {
   url: string;
   skills: string[];
   matchedKeywords: string[];
+  workMode: SearchWorkMode;
+  alreadyGeneratedResume: boolean;
+  generatedResumeId: string | null;
+  alreadyGeneratedCompanyInfo: boolean;
 };
 
 export type SearchScraperError = {
@@ -67,6 +78,7 @@ export type SearchDoneEvent = {
 };
 
 export type SearchGenerateJobDescriptionRequest = {
+  id?: string | null;
   source: OfferSource;
   title: string;
   company: string;
@@ -74,12 +86,57 @@ export type SearchGenerateJobDescriptionRequest = {
   salary: string | null;
   url: string;
   skills: string[];
+  companyContext?: string | null;
 };
 
 export type SearchGenerateJobDescriptionResponse = {
   jobDescription: string;
   sourceTextLength: number;
   usedLlm: boolean;
+  companyContextSource: 'request' | 'cache' | 'none';
+};
+
+export type SearchCompanyInfoRequest = {
+  id?: string | null;
+  source: OfferSource;
+  title: string;
+  company: string;
+  location: string;
+  salary: string | null;
+  url: string;
+  skills: string[];
+  question?: string | null;
+};
+
+export type SearchCompanyInfoSourcePage = {
+  url: string;
+  title: string;
+};
+
+export type SearchCompanyInfoEvidence = {
+  url: string;
+  title: string;
+  snippet: string;
+};
+
+export type SearchCompanyInfoStats = {
+  pagesVisited: number;
+  chunksIndexed: number;
+  relevantChunks: number;
+  retrievalMethod: 'embedding' | 'lexical';
+  usedLlm: boolean;
+};
+
+export type SearchCompanyInfoResponse = {
+  company: string;
+  websiteUrl: string | null;
+  websiteFoundVia: 'offer_page' | 'search_engine' | 'unresolved';
+  question: string;
+  summary: string;
+  highlights: string[];
+  sourcePages: SearchCompanyInfoSourcePage[];
+  evidence: SearchCompanyInfoEvidence[];
+  stats: SearchCompanyInfoStats;
 };
 
 export type SearchScrapeParams = {
@@ -94,6 +151,128 @@ export type SearchScrapeParams = {
   timeoutSeconds?: number;
 };
 
+export const SEARCH_OFFER_SOURCES: OfferSource[] = [
+  'nofluffjobs',
+  'justjoinit',
+  'bulldogjob',
+  'theprotocol',
+  'solidjobs',
+  'pracujpl',
+  'rocketjobs',
+  'olxpraca',
+  'indeed',
+  'glassdoor',
+  'ziprecruiter',
+  'careerbuilder',
+];
+
+export const EMPTY_SEARCH_SCRAPED_BY_SOURCE: Record<OfferSource, number> = {
+  nofluffjobs: 0,
+  justjoinit: 0,
+  bulldogjob: 0,
+  theprotocol: 0,
+  solidjobs: 0,
+  pracujpl: 0,
+  rocketjobs: 0,
+  olxpraca: 0,
+  indeed: 0,
+  glassdoor: 0,
+  ziprecruiter: 0,
+  careerbuilder: 0,
+};
+
+function normalizeScrapeTargetLabel(
+  value: unknown,
+  fallback: number | 'max' = 0
+): number | 'max' {
+  if (value === 'max') {
+    return 'max';
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim().toLowerCase();
+    if (trimmed === 'max') {
+      return 'max';
+    }
+    const parsed = Number.parseInt(trimmed, 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+
+  return fallback;
+}
+
+function normalizeScrapedCount(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value.trim(), 10);
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  }
+
+  return 0;
+}
+
+export function normalizeSearchProgressEvent(
+  event: SearchProgressEvent
+): SearchProgressEvent {
+  return {
+    ...event,
+    scrapedBySource: SEARCH_OFFER_SOURCES.reduce(
+      (accumulator, source) => ({
+        ...accumulator,
+        [source]: normalizeScrapedCount(event.scrapedBySource?.[source]),
+      }),
+      {} as Record<OfferSource, number>
+    ),
+  };
+}
+
+export function normalizeSearchScrapeResponse(
+  payload: SearchScrapeResponse | null | undefined,
+  fallbackRequestedBySource?: Partial<Record<OfferSource, number | 'max'>>
+): SearchScrapeResponse | null {
+  if (!payload?.meta) {
+    return null;
+  }
+
+  const requestedScrapeBySource = SEARCH_OFFER_SOURCES.reduce(
+    (accumulator, source) => ({
+      ...accumulator,
+      [source]: normalizeScrapeTargetLabel(
+        payload.meta.requestedScrapeBySource?.[source],
+        fallbackRequestedBySource?.[source] ?? 0
+      ),
+    }),
+    {} as Record<OfferSource, number | 'max'>
+  );
+  const scrapedBySource = SEARCH_OFFER_SOURCES.reduce(
+    (accumulator, source) => ({
+      ...accumulator,
+      [source]: normalizeScrapedCount(payload.meta.scrapedBySource?.[source]),
+    }),
+    {} as Record<OfferSource, number>
+  );
+
+  return {
+    ...payload,
+    meta: {
+      ...payload.meta,
+      requestedScrapeBySource,
+      scrapedBySource,
+    },
+  };
+}
+
 const SOURCE_QUERY_KEYS: Record<OfferSource, string> = {
   nofluffjobs: 'scrapeLimitNoFluffJobs',
   justjoinit: 'scrapeLimitJustJoinIt',
@@ -101,6 +280,12 @@ const SOURCE_QUERY_KEYS: Record<OfferSource, string> = {
   theprotocol: 'scrapeLimitTheProtocol',
   solidjobs: 'scrapeLimitSolidJobs',
   pracujpl: 'scrapeLimitPracujPl',
+  rocketjobs: 'scrapeLimitRocketJobs',
+  olxpraca: 'scrapeLimitOlxPraca',
+  indeed: 'scrapeLimitIndeed',
+  glassdoor: 'scrapeLimitGlassdoor',
+  ziprecruiter: 'scrapeLimitZipRecruiter',
+  careerbuilder: 'scrapeLimitCareerBuilder',
 };
 
 export function buildSearchScrapeUrl(params: SearchScrapeParams, stream = false): string {
@@ -135,11 +320,18 @@ export async function fetchSearchScrape(
   params: SearchScrapeParams
 ): Promise<{ status: number; payload: SearchScrapeResponse }> {
   const response = await fetch(buildSearchScrapeUrl(params, false));
-  const payload = (await response.json()) as SearchScrapeResponse;
+  const payload = normalizeSearchScrapeResponse(
+    (await response.json()) as SearchScrapeResponse,
+    undefined
+  );
 
   if (!response.ok && !payload?.meta) {
     const message = `Search scrape failed with status ${response.status}`;
     throw new Error(message);
+  }
+
+  if (payload === null) {
+    throw new Error('Search scrape returned an invalid payload.');
   }
 
   return { status: response.status, payload };
@@ -163,6 +355,27 @@ export async function generateJobDescriptionFromSearchOffer(
     return JSON.parse(text) as SearchGenerateJobDescriptionResponse;
   } catch {
     throw new Error('Job description generation returned invalid JSON.');
+  }
+}
+
+export async function getCompanyInfoFromSearchOffer(
+  offer: SearchCompanyInfoRequest
+): Promise<SearchCompanyInfoResponse> {
+  const response = await fetch(`${API_BASE}/search/company-info`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(offer),
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`Company info request failed (${response.status}): ${text}`);
+  }
+
+  try {
+    return JSON.parse(text) as SearchCompanyInfoResponse;
+  } catch {
+    throw new Error('Company info request returned invalid JSON.');
   }
 }
 

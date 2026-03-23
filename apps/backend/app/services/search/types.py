@@ -12,11 +12,18 @@ OfferSource = Literal[
     "theprotocol",
     "solidjobs",
     "pracujpl",
+    "rocketjobs",
+    "olxpraca",
+    "indeed",
+    "glassdoor",
+    "ziprecruiter",
+    "careerbuilder",
 ]
 
 KeywordMode = Literal["and", "or"]
 OfferSortBy = Literal["relevance", "name", "salary"]
 OfferSortDirection = Literal["asc", "desc"]
+WorkMode = Literal["remote", "hybrid", "office", "unknown"]
 
 
 @dataclass(slots=True)
@@ -32,6 +39,7 @@ class ScrapedOffer:
     url: str
     skills: list[str]
     searchable_text: str
+    work_mode: WorkMode | None = None
 
 
 class PublicOffer(TypedDict):
@@ -46,6 +54,7 @@ class PublicOffer(TypedDict):
     url: str
     skills: list[str]
     matchedKeywords: list[str]
+    workMode: WorkMode
 
 
 class ScraperProgress(TypedDict):

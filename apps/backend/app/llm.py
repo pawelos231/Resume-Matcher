@@ -15,6 +15,14 @@ LLM_TIMEOUT_HEALTH_CHECK = 30
 LLM_TIMEOUT_COMPLETION = 120
 LLM_TIMEOUT_JSON = 180  # JSON completions may take longer
 OPENAI_MIN_MAX_TOKENS = 16_384
+EMBEDDING_TIMEOUT = 60
+
+EMBEDDING_MODEL_BY_PROVIDER = {
+    "openai": "text-embedding-3-small",
+    "openrouter": "openrouter/openai/text-embedding-3-small",
+    "gemini": "gemini/text-embedding-004",
+    "ollama": "ollama/nomic-embed-text",
+}
 
 # LLM-004: OpenRouter JSON-capable models (explicit allowlist)
 OPENROUTER_JSON_CAPABLE_MODELS = {
@@ -324,6 +332,11 @@ def _is_openai_output_limit_error(error: Exception) -> bool:
     return False
 
 
+def _get_embedding_model_name(config: LLMConfig) -> str | None:
+    """Return the default embedding model for the active provider."""
+    return EMBEDDING_MODEL_BY_PROVIDER.get(config.provider)
+
+
 def _with_compact_json_constraint(prompt: str) -> str:
     """Append compactness constraints to reduce output size for long JSON tasks."""
     return (
@@ -482,6 +495,88 @@ async def complete(
         raise ValueError(
             "LLM completion failed. Please check your API configuration and try again."
         ) from e
+
+
+def _extract_embedding_vector(item: Any) -> list[float] | None:
+    """Extract a numeric embedding vector from LiteLLM embedding output."""
+    raw_vector: Any = None
+
+    if hasattr(item, "embedding"):
+        raw_vector = item.embedding
+    elif isinstance(item, dict):
+        raw_vector = item.get("embedding")
+
+    if not isinstance(raw_vector, list):
+        return None
+
+    vector: list[float] = []
+    for value in raw_vector:
+        if isinstance(value, (int, float)):
+            vector.append(float(value))
+
+    return vector or None
+
+
+async def embed_texts(
+    texts: list[str],
+    config: LLMConfig | None = None,
+    *,
+    model: str | None = None,
+) -> list[list[float]] | None:
+    """Generate embeddings for the provided texts when the provider supports it.
+
+    Returns ``None`` when embeddings are unavailable or the provider call fails so
+    callers can fall back to lexical retrieval without failing the request.
+    """
+    if not texts:
+        return []
+
+    if config is None:
+        config = get_llm_config()
+
+    if config.provider != "ollama" and not config.api_key:
+        logging.warning(
+            "Embedding request skipped because API key is missing",
+            extra={"provider": config.provider},
+        )
+        return None
+
+    model_name = model or _get_embedding_model_name(config)
+    if not model_name:
+        return None
+
+    try:
+        response = await litellm.aembedding(
+            model=model_name,
+            input=texts,
+            api_key=config.api_key,
+            api_base=_normalize_api_base(config.provider, config.api_base),
+            timeout=EMBEDDING_TIMEOUT,
+        )
+        raw_data: Any = None
+        if hasattr(response, "data"):
+            raw_data = response.data
+        elif isinstance(response, dict):
+            raw_data = response.get("data")
+
+        if not isinstance(raw_data, list):
+            return None
+
+        vectors: list[list[float]] = []
+        for item in raw_data:
+            vector = _extract_embedding_vector(item)
+            if vector is None:
+                return None
+            vectors.append(vector)
+
+        return vectors
+    except Exception as exc:
+        logging.warning(
+            "Embedding request failed; falling back to lexical retrieval: %s",
+            exc,
+            extra={"provider": config.provider, "model": model_name},
+        )
+        return None
 
 
 def _supports_json_mode(provider: str, model: str) -> bool:

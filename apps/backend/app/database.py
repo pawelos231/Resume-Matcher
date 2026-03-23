@@ -1,6 +1,7 @@
 """TinyDB database layer for JSON storage."""
 
 import asyncio
+import copy
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,6 +47,21 @@ class Database:
     def improvements(self) -> Table:
         """Improvement results table."""
         return self.db.table("improvements")
+
+    @property
+    def search_cache(self) -> Table:
+        """Persistent search-result cache table."""
+        return self.db.table("search_cache")
+
+    @property
+    def company_info_cache(self) -> Table:
+        """Persistent company-info cache table."""
+        return self.db.table("company_info_cache")
+
+    @property
+    def offer_resume_cache(self) -> Table:
+        """Persistent offer-to-resume cache table."""
+        return self.db.table("offer_resume_cache")
 
     def close(self) -> None:
         """Close database connection."""
@@ -210,6 +226,24 @@ class Database:
         self.jobs.insert(doc)
         return doc
 
+    def create_job_with_offer_marker(
+        self,
+        content: str,
+        resume_id: str | None = None,
+        offer_marker: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create a new job description entry with optional search-offer metadata."""
+        job = self.create_job(content=content, resume_id=resume_id)
+        if offer_marker is None:
+            return job
+
+        return self.update_job(
+            job["job_id"],
+            {
+                "offer_marker": copy.deepcopy(offer_marker),
+            },
+        ) or job
+
     def get_job(self, job_id: str) -> dict[str, Any] | None:
         """Get job by ID."""
         Job = Query()
@@ -223,6 +257,188 @@ class Database:
         if not updated:
             return None
         return self.get_job(job_id)
+
+    # Persistent cache operations
+    def get_cached_search_result(self, cache_key: str) -> dict[str, Any] | None:
+        """Return a persistent search cache entry if it exists and is not expired."""
+        SearchCache = Query()
+        result = self.search_cache.search(SearchCache.cache_key == cache_key)
+        if not result:
+            return None
+
+        entry = result[0]
+        expires_at = entry.get("expires_at")
+        if not isinstance(expires_at, (int, float)):
+            self.search_cache.remove(SearchCache.cache_key == cache_key)
+            return None
+
+        if expires_at <= datetime.now(timezone.utc).timestamp():
+            self.search_cache.remove(SearchCache.cache_key == cache_key)
+            return None
+
+        return copy.deepcopy(entry)
+
+    def upsert_cached_search_result(
+        self,
+        cache_key: str,
+        status: int,
+        payload: dict[str, Any],
+        ttl_seconds: int,
+    ) -> dict[str, Any]:
+        """Store a persistent search cache entry."""
+        SearchCache = Query()
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        existing = self.search_cache.search(SearchCache.cache_key == cache_key)
+        created_at = existing[0].get("created_at", now_iso) if existing else now_iso
+        entry = {
+            "cache_key": cache_key,
+            "status": status,
+            "payload": copy.deepcopy(payload),
+            "created_at": created_at,
+            "updated_at": now_iso,
+            "expires_at": now.timestamp() + max(ttl_seconds, 0),
+        }
+
+        if existing:
+            self.search_cache.update(entry, SearchCache.cache_key == cache_key)
+        else:
+            self.search_cache.insert(entry)
+
+        return copy.deepcopy(entry)
+
+    def get_company_info_cache(self, offer_key: str) -> dict[str, Any] | None:
+        """Return cached company info for an offer, if present."""
+        CompanyInfoCache = Query()
+        result = self.company_info_cache.search(CompanyInfoCache.offer_key == offer_key)
+        if not result:
+            return None
+        return copy.deepcopy(result[0])
+
+    def upsert_company_info_cache(
+        self,
+        offer_key: str,
+        offer_marker: dict[str, Any],
+        response: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist generated company info for an offer."""
+        CompanyInfoCache = Query()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        existing = self.company_info_cache.search(CompanyInfoCache.offer_key == offer_key)
+        created_at = existing[0].get("created_at", now_iso) if existing else now_iso
+        entry = {
+            "offer_key": offer_key,
+            "offer_marker": copy.deepcopy(offer_marker),
+            "response": copy.deepcopy(response),
+            "created_at": created_at,
+            "updated_at": now_iso,
+        }
+
+        if existing:
+            self.company_info_cache.update(entry, CompanyInfoCache.offer_key == offer_key)
+        else:
+            self.company_info_cache.insert(entry)
+
+        return copy.deepcopy(entry)
+
+    def get_offer_resume_cache(self, offer_key: str) -> dict[str, Any] | None:
+        """Return cached resume mapping for an offer, cleaning up stale entries."""
+        OfferResumeCache = Query()
+        result = self.offer_resume_cache.search(OfferResumeCache.offer_key == offer_key)
+        if not result:
+            return None
+
+        entry = result[0]
+        resume_id = entry.get("resume_id")
+        if not isinstance(resume_id, str) or self.get_resume(resume_id) is None:
+            self.offer_resume_cache.remove(OfferResumeCache.offer_key == offer_key)
+            return None
+
+        return copy.deepcopy(entry)
+
+    def upsert_offer_resume_cache(
+        self,
+        offer_key: str,
+        resume_id: str,
+        offer_marker: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Persist the tailored resume associated with a search offer."""
+        if self.get_resume(resume_id) is None:
+            raise ValueError(f"Cannot cache missing resume: {resume_id}")
+
+        OfferResumeCache = Query()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        existing = self.offer_resume_cache.search(OfferResumeCache.offer_key == offer_key)
+        created_at = existing[0].get("created_at", now_iso) if existing else now_iso
+        entry = {
+            "offer_key": offer_key,
+            "resume_id": resume_id,
+            "offer_marker": copy.deepcopy(offer_marker),
+            "created_at": created_at,
+            "updated_at": now_iso,
+        }
+
+        if existing:
+            self.offer_resume_cache.update(entry, OfferResumeCache.offer_key == offer_key)
+        else:
+            self.offer_resume_cache.insert(entry)
+
+        return copy.deepcopy(entry)
+
+    def get_offer_cache_statuses(
+        self, offer_keys: list[str]
+    ) -> dict[str, dict[str, Any]]:
+        """Return company-info and resume cache status for the requested offer keys."""
+        requested_keys = {
+            offer_key.strip() for offer_key in offer_keys if isinstance(offer_key, str) and offer_key.strip()
+        }
+        if not requested_keys:
+            return {}
+
+        statuses: dict[str, dict[str, Any]] = {
+            offer_key: {
+                "has_company_info": False,
+                "resume_id": None,
+            }
+            for offer_key in requested_keys
+        }
+
+        for entry in self.company_info_cache.all():
+            offer_key = entry.get("offer_key")
+            if offer_key in requested_keys:
+                statuses[offer_key]["has_company_info"] = True
+
+        existing_resume_ids = {
+            resume.get("resume_id")
+            for resume in self.resumes.all()
+            if isinstance(resume.get("resume_id"), str)
+        }
+        stale_offer_keys: list[str] = []
+
+        for entry in self.offer_resume_cache.all():
+            offer_key = entry.get("offer_key")
+            if offer_key not in requested_keys:
+                continue
+
+            resume_id = entry.get("resume_id")
+            if not isinstance(resume_id, str) or resume_id not in existing_resume_ids:
+                stale_offer_keys.append(offer_key)
+                continue
+
+            statuses[offer_key]["resume_id"] = resume_id
+
+        if stale_offer_keys:
+            OfferResumeCache = Query()
+            for offer_key in stale_offer_keys:
+                self.offer_resume_cache.remove(OfferResumeCache.offer_key == offer_key)
+
+        return copy.deepcopy(statuses)
+
+    def delete_offer_resume_cache_by_resume_id(self, resume_id: str) -> int:
+        """Remove persistent offer mappings that point to a deleted resume."""
+        OfferResumeCache = Query()
+        removed = self.offer_resume_cache.remove(OfferResumeCache.resume_id == resume_id)
+        return len(removed)
 
     # Improvement operations
     def create_improvement(
@@ -277,6 +493,9 @@ class Database:
         self.resumes.truncate()
         self.jobs.truncate()
         self.improvements.truncate()
+        self.search_cache.truncate()
+        self.company_info_cache.truncate()
+        self.offer_resume_cache.truncate()
 
         # Clear uploads directory
         uploads_dir = settings.data_dir / "uploads"

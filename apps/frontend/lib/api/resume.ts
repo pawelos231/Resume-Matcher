@@ -2,6 +2,7 @@ import { ImprovedResult } from '@/components/common/resume_previewer_context';
 import type { ResumeData } from '@/components/dashboard/resume-component';
 import { type TemplateSettings } from '@/lib/types/template-settings';
 import { type Locale } from '@/i18n/config';
+import type { JobOfferMarker } from '@/lib/search-offer-resume-map';
 import { API_BASE, apiPost, apiPatch, apiDelete, apiFetch } from './client';
 
 // Matches backend schemas/models.py ResumeData
@@ -106,8 +107,15 @@ export interface ResumeListItem {
   title?: string | null;
   cover_letter_preview?: string | null;
   outreach_message_preview?: string | null;
+  categories: string[];
+  primary_category: string | null;
   // Optional lightweight snippet of associated job description (populated client-side)
   jobSnippet?: string;
+}
+
+interface ResumeListItemResponse extends Omit<ResumeListItem, 'categories' | 'primary_category'> {
+  categories?: string[];
+  primary_category?: string | null;
 }
 
 async function postImprove(
@@ -139,11 +147,13 @@ async function postImprove(
 /** Uploads job descriptions and returns a job_id */
 export async function uploadJobDescriptions(
   descriptions: string[],
-  resumeId: string
+  resumeId: string,
+  offerMarker?: JobOfferMarker
 ): Promise<string> {
   const res = await apiPost('/jobs/upload', {
     job_descriptions: descriptions,
     resume_id: resumeId,
+    offerMarker: offerMarker ?? null,
   });
   if (!res.ok) throw new Error(`Upload failed with status ${res.status}`);
   const data = await res.json();
@@ -200,8 +210,15 @@ export async function fetchResumeList(includeMaster = false): Promise<ResumeList
   if (!res.ok) {
     throw new Error(`Failed to load resumes list (status ${res.status}).`);
   }
-  const payload = (await res.json()) as { data: ResumeListItem[] };
-  return payload.data;
+  const payload = (await res.json()) as { data: ResumeListItemResponse[] };
+  return payload.data.map((item) => {
+    const categories = item.categories?.length ? item.categories : ['uncategorized'];
+    return {
+      ...item,
+      categories,
+      primary_category: item.primary_category ?? categories[0] ?? 'uncategorized',
+    };
+  });
 }
 
 export async function updateResume(

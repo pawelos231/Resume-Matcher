@@ -78,6 +78,7 @@
     "retryFailed": "Retry failed. Try uploading a different file.",
     "manualInitFailed": "Could not initialize master resume manually.",
     "createResume": "Create Resume",
+    "deleteTailoredResumes": "Delete Tailored Resumes",
     "edited": "Edited {date}",
     "statusLine": "STATUS: {status}",
     "status": {
@@ -839,6 +840,9 @@
     "discardChangesDescription": "Any unsaved changes will be lost.",
     "clearApiKeys": "Clear All API Keys?",
     "clearApiKeysDescription": "Are you sure you want to remove all API keys? You will need to re-enter them to use AI features.",
+    "deleteAllTailoredResumesTitle": "Delete Tailored Resumes",
+    "deleteAllTailoredResumesDescription": "This will permanently remove all tailored resumes. Your master resume will be kept.",
+    "deleteAllTailoredResumesConfirmLabel": "Delete All",
     "resetDatabase": "Reset Database and Clear All Data?",
     "resetDatabaseDescription": "This will permanently delete ALL resumes, job descriptions, and generated content. This action is irreversible."
   }

@@ -19,6 +19,7 @@ from app.schemas.models import (
     ImproveResumeConfirmRequest,
     ImproveResumeRequest,
     ImproveResumeResponse,
+    JobOfferMarker,
     JobUploadRequest,
     JobUploadResponse,
     LanguageConfigRequest,
@@ -60,6 +61,11 @@ from app.schemas.search import (
     SearchStopResponse,
     SearchGenerateJobDescriptionRequest,
     SearchGenerateJobDescriptionResponse,
+    SearchCompanyInfoRequest,
+    SearchCompanyInfoSourcePage,
+    SearchCompanyInfoEvidence,
+    SearchCompanyInfoStats,
+    SearchCompanyInfoResponse,
 )
 
 __all__ = [
@@ -80,6 +86,7 @@ __all__ = [
     "ResumeFetchResponse",
     "ResumeSummary",
     "ResumeListResponse",
+    "JobOfferMarker",
     "JobUploadRequest",
     "JobUploadResponse",
     "ImproveResumeRequest",
@@ -120,4 +127,9 @@ __all__ = [
     "SearchStopResponse",
     "SearchGenerateJobDescriptionRequest",
     "SearchGenerateJobDescriptionResponse",
+    "SearchCompanyInfoRequest",
+    "SearchCompanyInfoSourcePage",
+    "SearchCompanyInfoEvidence",
+    "SearchCompanyInfoStats",
+    "SearchCompanyInfoResponse",
 ]

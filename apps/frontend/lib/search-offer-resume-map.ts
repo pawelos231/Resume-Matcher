@@ -19,6 +19,14 @@ export type OfferResumeMarker = {
   offer: Pick<SearchOffer, 'source' | 'title' | 'company' | 'url'>;
 };
 
+export type JobOfferMarker = {
+  offerKey: string;
+  source: SearchOffer['source'];
+  title: string;
+  company: string;
+  url: string;
+};
+
 export function getOfferRuntimeKey(offer: Pick<SearchOffer, 'source' | 'id' | 'url'>): string {
   return `${offer.source}:${offer.id}:${offer.url}`;
 }
@@ -32,6 +40,16 @@ export function createOfferResumeMarker(offer: SearchOffer): OfferResumeMarker {
       company: offer.company,
       url: offer.url,
     },
+  };
+}
+
+export function toJobOfferMarker(marker: OfferResumeMarker): JobOfferMarker {
+  return {
+    offerKey: marker.offerKey,
+    source: marker.offer.source,
+    title: marker.offer.title,
+    company: marker.offer.company,
+    url: marker.offer.url,
   };
 }
 

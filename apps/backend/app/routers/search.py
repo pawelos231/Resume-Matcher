@@ -12,12 +12,24 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from app.database import db
 from app.schemas import (
+    SearchCompanyInfoRequest,
+    SearchCompanyInfoResponse,
     SearchGenerateJobDescriptionRequest,
     SearchGenerateJobDescriptionResponse,
     SearchScrapeResponse,
     SearchStopRequest,
     SearchStopResponse,
+)
+from app.services.search.cache_utils import (
+    build_company_context_text,
+    build_offer_cache_key,
+    build_offer_cache_key_from_offer,
+)
+from app.services.search.company_crawler import (
+    CompanyCrawlerInput,
+    generate_company_info_from_offer,
 )
 from app.services.search.offer_generation import (
     OfferJobDescriptionInput,
@@ -30,6 +42,65 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/search", tags=["Search"])
 _ACTIVE_SCRAPE_STOPS: dict[str, asyncio.Event] = {}
 _ACTIVE_SCRAPE_STOPS_LOCK = asyncio.Lock()
+_KNOWN_WORK_MODES = {"remote", "hybrid", "office", "unknown"}
+
+
+def _build_offer_marker(
+    source: str,
+    title: str,
+    company: str,
+    url: str,
+) -> dict[str, str]:
+    return {
+        "source": source,
+        "title": title,
+        "company": company,
+        "url": url,
+    }
+
+
+def _decorate_search_payload_with_cache_status(payload: dict[str, Any]) -> dict[str, Any]:
+    offers = payload.get("data")
+    if not isinstance(offers, list):
+        return payload
+
+    offer_keys = [
+        offer_key
+        for offer in offers
+        if isinstance(offer, Mapping)
+        for offer_key in [build_offer_cache_key_from_offer(offer)]
+        if offer_key is not None
+    ]
+    cache_statuses = db.get_offer_cache_statuses(offer_keys)
+
+    decorated_offers: list[dict[str, Any]] = []
+    for offer in offers:
+        if not isinstance(offer, Mapping):
+            continue
+
+        decorated_offer = dict(offer)
+        work_mode = decorated_offer.get("workMode")
+        decorated_offer["workMode"] = (
+            work_mode if isinstance(work_mode, str) and work_mode in _KNOWN_WORK_MODES else "unknown"
+        )
+        offer_key = build_offer_cache_key_from_offer(offer)
+        status = cache_statuses.get(offer_key or "", {})
+        resume_id = status.get("resume_id")
+        decorated_offer["alreadyGeneratedResume"] = isinstance(resume_id, str) and bool(
+            resume_id
+        )
+        decorated_offer["generatedResumeId"] = (
+            resume_id if isinstance(resume_id, str) and resume_id else None
+        )
+        decorated_offer["alreadyGeneratedCompanyInfo"] = bool(
+            status.get("has_company_info")
+        )
+        decorated_offers.append(decorated_offer)
+
+    return {
+        **payload,
+        "data": decorated_offers,
+    }
 
 
 def _format_sse(event: str, data: dict[str, Any]) -> bytes:
@@ -96,7 +167,10 @@ async def scrape_offers(request: Request):
         try:
             try:
                 status, payload = await run_scrape(params, stop_event=stop_event)
-                return JSONResponse(status_code=status, content=payload)
+                return JSONResponse(
+                    status_code=status,
+                    content=_decorate_search_payload_with_cache_status(payload),
+                )
             except Exception as exc:
                 logger.exception("Search scrape failed")
                 return JSONResponse(
@@ -122,7 +196,15 @@ async def scrape_offers(request: Request):
                 _on_progress,
                 stop_event=stop_event,
             )
-            queue.put_nowait(("done", {"status": status, "payload": payload}))
+            queue.put_nowait(
+                (
+                    "done",
+                    {
+                        "status": status,
+                        "payload": _decorate_search_payload_with_cache_status(payload),
+                    },
+                )
+            )
         except Exception as exc:
             logger.exception("Search scrape stream failed")
             queue.put_nowait(("error", {"message": str(exc)}))
@@ -172,6 +254,21 @@ async def generate_offer_job_description(
     request: SearchGenerateJobDescriptionRequest,
 ) -> SearchGenerateJobDescriptionResponse:
     """Extract offer content and generate a tailor-ready job description."""
+    company_context = request.companyContext.strip() if request.companyContext else None
+    company_context_source: str = "request" if company_context else "none"
+
+    if company_context_source == "none":
+        offer_key = build_offer_cache_key(request.source, request.id, request.url)
+        if offer_key:
+            cached_company_info = db.get_company_info_cache(offer_key)
+            if cached_company_info and isinstance(cached_company_info.get("response"), dict):
+                cached_company_context = build_company_context_text(
+                    cached_company_info["response"]
+                )
+                if cached_company_context:
+                    company_context = cached_company_context
+                    company_context_source = "cache"
+
     offer = OfferJobDescriptionInput(
         source=request.source,
         title=request.title,
@@ -180,10 +277,12 @@ async def generate_offer_job_description(
         salary=request.salary,
         url=request.url,
         skills=request.skills,
+        company_context=company_context,
     )
 
     try:
         payload = await generate_job_description_from_offer(offer)
+        payload["companyContextSource"] = company_context_source
         return SearchGenerateJobDescriptionResponse(**payload)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -192,4 +291,53 @@ async def generate_offer_job_description(
         raise HTTPException(
             status_code=500,
             detail="Failed to generate job description. Please try again.",
+        ) from exc
+
+
+@router.post(
+    "/company-info",
+    response_model=SearchCompanyInfoResponse,
+)
+async def get_company_info(
+    request: SearchCompanyInfoRequest,
+) -> SearchCompanyInfoResponse:
+    """Resolve and crawl a company's site to summarize relevant information."""
+    offer_key = build_offer_cache_key(request.source, request.id, request.url)
+    if offer_key:
+        cached_company_info = db.get_company_info_cache(offer_key)
+        if cached_company_info and isinstance(cached_company_info.get("response"), dict):
+            return SearchCompanyInfoResponse(**cached_company_info["response"])
+
+    payload = CompanyCrawlerInput(
+        source=request.source,
+        title=request.title,
+        company=request.company,
+        location=request.location,
+        salary=request.salary,
+        url=request.url,
+        skills=request.skills,
+        question=request.question,
+    )
+
+    try:
+        result = await generate_company_info_from_offer(payload)
+        if offer_key:
+            db.upsert_company_info_cache(
+                offer_key=offer_key,
+                offer_marker=_build_offer_marker(
+                    source=request.source,
+                    title=request.title,
+                    company=request.company,
+                    url=request.url,
+                ),
+                response=result,
+            )
+        return SearchCompanyInfoResponse(**result)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Search company-info generation failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to get company info. Please try again.",
         ) from exc

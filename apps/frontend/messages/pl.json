@@ -1,0 +1,354 @@
+{
+  "common": {
+    "save": "Zapisz",
+    "saving": "Zapisywanie...",
+    "cancel": "Anuluj",
+    "delete": "Usuń",
+    "edit": "Edytuj",
+    "download": "Pobierz",
+    "loading": "Ładowanie...",
+    "uploading": "Wysyłanie...",
+    "checking": "Sprawdzanie...",
+    "processing": "Przetwarzanie...",
+    "generating": "Generowanie...",
+    "error": "Błąd",
+    "success": "Sukces",
+    "confirm": "Potwierdź",
+    "back": "Wstecz",
+    "retry": "Ponów",
+    "next": "Dalej",
+    "continue": "Kontynuuj",
+    "finish": "Zakończ",
+    "optional": "Opcjonalne",
+    "close": "Zamknij",
+    "ok": "OK",
+    "search": "Szukaj",
+    "filter": "Filtruj",
+    "reset": "Resetuj",
+    "apply": "Zastosuj",
+    "selectOption": "Wybierz opcję...",
+    "unknown": "Nieznane",
+    "keysCleared": "Klucze API zostały wyczyszczone",
+    "databaseReset": "Baza danych została zresetowana",
+    "popupBlocked": "Wyskakujące okno zostało zablokowane. Zezwól na popupy lub otwórz ten adres ręcznie: {url}"
+  },
+  "home": {
+    "docs": "Dokumentacja",
+    "launchApp": "Uruchom aplikację"
+  },
+  "nav": {
+    "dashboard": "Pulpit",
+    "builder": "Edytor CV",
+    "tailor": "Dostosuj CV",
+    "settings": "Ustawienia",
+    "backToDashboard": "Wróć do pulpitu",
+    "goToSettings": "Przejdź do ustawień"
+  },
+  "dashboard": {
+    "title": "Pulpit",
+    "subtitle": "Zarządzaj CV i aplikacjami o pracę",
+    "myResumes": "Moje CV",
+    "noResumes": "Brak CV",
+    "noResumesDescription": "Wyślij pierwsze CV, aby zacząć",
+    "uploadResume": "Wyślij CV",
+    "createNew": "Utwórz nowe",
+    "lastModified": "Ostatnia modyfikacja",
+    "actions": "Akcje",
+    "preview": "Podgląd",
+    "viewResume": "Zobacz CV",
+    "editResume": "Edytuj CV",
+    "deleteResume": "Usuń CV",
+    "downloadPdf": "Pobierz PDF",
+    "tailorResume": "Dostosuj do oferty",
+    "selectModule": "Wybierz moduł",
+    "masterResume": "CV główne",
+    "tailoredResume": "Dostosowane CV",
+    "initializeMasterResume": "Utwórz CV główne",
+    "initializeSequence": "Sekwencja inicjalizacji",
+    "initializeMasterResumeManually": "Utwórz CV główne ręcznie",
+    "initializeManualSequence": "Ręczna sekwencja inicjalizacji",
+    "refreshStatus": "Odśwież status",
+    "retryProcessing": "Ponów przetwarzanie",
+    "retryingProcessing": "Ponawianie...",
+    "deleteAndReupload": "Usuń i wyślij ponownie",
+    "processingFailedHint": "Parsowanie AI nie powiodło się. Ponów próbę lub usuń plik i wgraj inny.",
+    "retrySuccess": "Przetwarzanie zakończone sukcesem",
+    "retryFailed": "Ponowienie nie powiodło się. Spróbuj wgrać inny plik.",
+    "manualInitFailed": "Nie udało się ręcznie utworzyć CV głównego.",
+    "createResume": "Utwórz CV",
+    "deleteTailoredResumes": "Usuń dostosowane CV",
+    "edited": "Edytowano {date}",
+    "statusLine": "STATUS: {status}",
+    "status": {
+      "checking": "Sprawdzanie...",
+      "processing": "Przetwarzanie...",
+      "ready": "Gotowe",
+      "failed": "Przetwarzanie nie powiodło się",
+      "pending": "Oczekuje"
+    },
+    "llmNotConfiguredTitle": "[ LLM NIE SKONFIGUROWANY ]",
+    "llmNotConfiguredMessage": "> Brakuje kluczy API. Dostosowywanie CV jest wyłączone do czasu konfiguracji w ustawieniach.",
+    "setupRequiredTitle": "[ WYMAGANA KONFIGURACJA ]",
+    "setupRequiredMessage": "> Skonfiguruj klucz API w ustawieniach, aby włączyć dostosowywanie CV.",
+    "uploadDialog": {
+      "success": "CV zostało wysłane pomyślnie.",
+      "successMaster": "CV zostało wysłane i ustawione jako główne.",
+      "successMissingId": "Wysyłka zakończyła się sukcesem, ale nie zwrócono ID CV.",
+      "parsingFailed": "CV zostało wysłane, ale parsowanie AI nie powiodło się. Nadal możesz dostosować je ręcznie.",
+      "failed": "Wysyłka nie powiodła się.",
+      "dropzoneTitle": "Kliknij lub przeciągnij plik",
+      "dropzoneSubtitle": "PDF, DOC, DOCX (maks. 4 MB)",
+      "tryDifferentFile": "Spróbuj innego pliku",
+      "parsingFailedKeepOpen": "Parsowanie AI nie powiodło się. Spróbuj innego pliku albo zamknij to okno."
+    }
+  },
+  "builder": {
+    "title": "Edytor CV",
+    "editMode": "Tryb edycji",
+    "previewMode": "Tryb podglądu",
+    "createAndPreview": "Twórz i podglądaj",
+    "previewTabs": {
+      "resume": "CV",
+      "coverLetter": "LIST MOTYWACYJNY",
+      "outreach": "WIADOMOŚĆ OUTREACH",
+      "jdMatch": "DOPASOWANIE DO OFERTY"
+    }
+  },
+  "tailor": {
+    "title": "Dostosuj CV",
+    "subtitle": "Zoptymalizuj CV pod konkretną ofertę",
+    "heroTitle": "Dostosuj swoje CV",
+    "selectResume": "Wybierz CV",
+    "pasteJobDescription": "Wklej opis stanowiska",
+    "pasteJobDescriptionBelow": "Wklej opis stanowiska poniżej",
+    "jobDescriptionPlaceholder": "Wklej tutaj opis stanowiska...",
+    "promptLabel": "Intensywność dopasowania",
+    "promptDescription": "Wybierz, jak mocno dopasować CV do oferty pracy.",
+    "analyzeJob": "Analizuj ofertę",
+    "generateTailored": "Wygeneruj dopasowane CV",
+    "setupRequiredTitle": "[ WYMAGANA KONFIGURACJA ]",
+    "noApiKeyMessage": "> Brak skonfigurowanego klucza API. Dostosowywanie CV wymaga dostawcy LLM.",
+    "configureApiKey": "Skonfiguruj klucz API",
+    "configureApiKeyFirst": "Najpierw skonfiguruj klucz API",
+    "charactersCount": "{count} znaków",
+    "matchScore": "Wynik dopasowania",
+    "suggestions": "Sugestie",
+    "keywords": "Słowa kluczowe do uwzględnienia",
+    "footerTagline": "SILNIK OPTYMALIZACJI OPARTY NA AI"
+  },
+  "settings": {
+    "title": "Ustawienia",
+    "subtitle": "Skonfiguruj swoje preferencje",
+    "aiProvider": "Dostawca AI",
+    "aiProviderDescription": "Wybierz preferowanego dostawcę AI do analizy CV",
+    "apiKey": "Klucz API",
+    "apiKeyPlaceholder": "Wpisz klucz API",
+    "saveApiKey": "Zapisz klucz API",
+    "contentLanguage": "Język treści",
+    "contentLanguageDescription": "Język generowanych treści (CV, listy motywacyjne)",
+    "uiLanguage": "Język interfejsu",
+    "uiLanguageDescription": "Język interfejsu użytkownika",
+    "theme": "Motyw",
+    "themeDescription": "Wybierz preferowany motyw kolorystyczny",
+    "lightMode": "Jasny",
+    "darkMode": "Ciemny",
+    "systemMode": "Systemowy",
+    "dangerZone": "Strefa ryzyka",
+    "clearApiKeys": "Wyczyść klucze API",
+    "clearApiKeysDescription": "Usuwa wszystkie zapisane klucze API z konfiguracji. Tej operacji nie można cofnąć.",
+    "resetDatabase": "Resetuj bazę danych",
+    "resetDatabaseDescription": "Usuwa WSZYSTKIE dane, w tym CV, oferty pracy i wygenerowane treści. Tej operacji nie można cofnąć.",
+    "llmConfigurationTitle": "Konfiguracja LLM",
+    "providerLabel": "Dostawca",
+    "statusCards": {
+      "llm": "LLM",
+      "database": "Baza danych",
+      "resumes": "CV",
+      "jobs": "Oferty pracy",
+      "improvements": "Ulepszenia",
+      "masterResume": "CV główne"
+    },
+    "statusValues": {
+      "healthy": "Sprawny",
+      "offline": "Offline",
+      "connected": "Połączony",
+      "configured": "Skonfigurowany",
+      "notSet": "Nie ustawiono"
+    },
+    "setupRequired": {
+      "title": "[ WYMAGANA KONFIGURACJA ]",
+      "description": "> Brak skonfigurowanego klucza API. Dodaj poniżej klucz API dostawcy LLM, aby włączyć dostosowywanie CV."
+    },
+    "systemStatus": {
+      "title": "Status systemu",
+      "refresh": "Odśwież",
+      "unableToConnect": "Nie można połączyć się z backendem",
+      "expectedAt": "Oczekiwany adres: {apiUrl}",
+      "lastFetched": {
+        "never": "Nigdy",
+        "justNow": "Przed chwilą",
+        "minutesAgo": "{minutes} min temu",
+        "hoursAgo": "{hours} godz. temu"
+      }
+    },
+    "llmConfiguration": {
+      "selectedProvider": "WYBRANO: {provider}",
+      "modelLabel": "Model",
+      "defaultModel": "DOMYŚLNY: {model}",
+      "apiKeyLabel": "Klucz API",
+      "apiKeyOptionalForOllama": "(Opcjonalny dla Ollama)",
+      "apiKeyPlaceholder": "sk-...",
+      "apiKeyNotRequiredPlaceholder": "Niewymagany dla modeli lokalnych",
+      "leaveBlankToKeepExistingKey": "ZOSTAW PUSTE, ABY ZACHOWAĆ OBECNY KLUCZ",
+      "baseUrlLabel": "Base URL (opcjonalnie)",
+      "baseUrlPlaceholder": "np. https://api.openai.com/v1",
+      "baseUrlDescription": "Nadpisz bazowy URL API, aby użyć proxy lub agregatora. Pozostaw puste, aby użyć domyślnego adresu dostawcy.",
+      "testConnection": "Przetestuj połączenie",
+      "errorPrefix": "BŁĄD: {error}",
+      "connectionSuccessful": "POŁĄCZENIE UDANE",
+      "connectionFailed": "POŁĄCZENIE NIEUDANE",
+      "connectionDetails": "Dostawca: {provider} | Model: {model}",
+      "testPromptLabel": "PROMPT TESTOWY",
+      "modelOutputLabel": "ODPOWIEDŹ MODELU",
+      "errorDetailLabel": "SZCZEGÓŁY BŁĘDU"
+    },
+    "contentGeneration": {
+      "title": "Generowanie treści",
+      "description": "Włącz dodatkowe generowanie treści podczas dopasowywania CV. Gdy opcja jest aktywna, dokumenty zostaną wygenerowane automatycznie razem z dostosowanym CV.",
+      "coverLetter": {
+        "label": "List motywacyjny",
+        "description": "Generuj dopasowany list motywacyjny razem z CV"
+      },
+      "outreachMessage": {
+        "label": "Wiadomość outreach",
+        "description": "Generuj wiadomość networkingową na LinkedIn lub e-mail"
+      }
+    },
+    "promptSettings": {
+      "title": "Ustawienia promptu",
+      "description": "Wybierz domyślny prompt używany do dopasowywania CV.",
+      "defaultLabel": "Domyślny prompt dopasowania"
+    },
+    "footer": {
+      "status": {
+        "checking": "Sprawdzanie...",
+        "ready": "STATUS: GOTOWE",
+        "setupRequired": "STATUS: WYMAGANA KONFIGURACJA",
+        "offline": "STATUS: OFFLINE"
+      }
+    },
+    "errors": {
+      "unableToConnectBackend": "Nie można połączyć się z backendem. Czy serwer działa?",
+      "apiKeyRequired": "Klucz API jest wymagany dla wybranego dostawcy.",
+      "unknownProvider": "Backend zwrócił nieznanego dostawcę: {provider}",
+      "unableToSaveConfiguration": "Nie udało się zapisać konfiguracji",
+      "failedToClearApiKeys": "Nie udało się wyczyścić kluczy API. Spróbuj ponownie.",
+      "failedToResetDatabase": "Nie udało się zresetować bazy danych. Spróbuj ponownie."
+    }
+  },
+  "resumeViewer": {
+    "resumeNotFound": "Nie znaleziono CV",
+    "loading": "Ładowanie CV...",
+    "useTailorFeature": "Użyj funkcji dopasowania",
+    "retryProcessing": "Ponów przetwarzanie",
+    "deleteAndStartOver": "Usuń i zacznij od nowa",
+    "returnToDashboard": "Wróć do pulpitu",
+    "enhanceResume": "Ulepsz CV",
+    "downloadResume": "Pobierz CV",
+    "deletedTitle": "CV usunięte",
+    "deletedDescriptionMaster": "Twoje główne CV zostało trwale usunięte z systemu.",
+    "deletedDescriptionRegular": "CV zostało trwale usunięte z systemu."
+  },
+  "resume": {
+    "sections": {
+      "personalInfo": "Dane osobowe",
+      "summary": "Podsumowanie",
+      "experience": "Doświadczenie",
+      "education": "Edukacja",
+      "projects": "Projekty",
+      "skills": "Umiejętności i wyróżnienia",
+      "skillsOnly": "Umiejętności",
+      "certifications": "Szkolenia i certyfikaty",
+      "languages": "Języki",
+      "awards": "Nagrody",
+      "links": "Linki"
+    },
+    "defaults": {
+      "name": "Twoje imię i nazwisko"
+    },
+    "additional": {
+      "technicalSkills": "Umiejętności techniczne"
+    },
+    "additionalLabels": {
+      "technicalSkills": "Umiejętności techniczne:",
+      "languages": "Języki:",
+      "certifications": "Certyfikaty:",
+      "awards": "Nagrody:"
+    }
+  },
+  "coverLetter": {
+    "title": "List motywacyjny",
+    "generate": "Wygeneruj list motywacyjny",
+    "regenerate": "Wygeneruj ponownie",
+    "copyToClipboard": "Kopiuj do schowka",
+    "copied": "Skopiowano",
+    "editor": {
+      "placeholder": "Twój list motywacyjny pojawi się tutaj po dopasowaniu CV z włączonym generowaniem listu motywacyjnego...",
+      "tip": "WSKAZÓWKA: dobry list motywacyjny ma zwykle 300-400 słów. Edytuj go według potrzeb."
+    },
+    "preview": {
+      "defaultName": "Twoje imię i nazwisko",
+      "emptyTitle": "Brak treści listu motywacyjnego.",
+      "emptyDescription": "Włącz generowanie listu motywacyjnego w Ustawieniach, a następnie dopasuj CV."
+    },
+    "print": {
+      "emptyContent": "Brak dostępnej treści listu motywacyjnego."
+    }
+  },
+  "outreach": {
+    "title": "Wiadomość outreach",
+    "generate": "Wygeneruj wiadomość outreach",
+    "regenerate": "Wygeneruj ponownie",
+    "copy": "Kopiuj",
+    "copyToClipboard": "Kopiuj do schowka",
+    "copied": "Skopiowano",
+    "editor": {
+      "placeholder": "Wiadomość outreach pojawi się tutaj po dopasowaniu CV z włączonym generowaniem wiadomości outreach...",
+      "tip": "WSKAZÓWKA: wiadomości outreach powinny być krótkie (100-150 słów). Skopiuj i wklej je do LinkedIna lub e-maila."
+    },
+    "preview": {
+      "channels": {
+        "linkedin": "LinkedIn",
+        "email": "E-mail"
+      },
+      "howToUseTitle": "Jak użyć:",
+      "emptyTitle": "Brak wiadomości outreach.",
+      "emptyDescription": "Włącz generowanie wiadomości outreach w Ustawieniach, a następnie dopasuj CV."
+    }
+  },
+  "errors": {
+    "generic": "Coś poszło nie tak. Spróbuj ponownie.",
+    "networkError": "Błąd sieci. Sprawdź połączenie internetowe.",
+    "unauthorized": "Zaloguj się, aby kontynuować.",
+    "notFound": "Nie znaleziono żądanego zasobu.",
+    "validationError": "Sprawdź dane wejściowe i spróbuj ponownie."
+  },
+  "confirmations": {
+    "deleteResume": "Czy na pewno chcesz usunąć to CV?",
+    "deleteResumeDescription": "Tej operacji nie można cofnąć.",
+    "deleteMasterResumeTitle": "Usuń CV główne",
+    "deleteMasterResumeDescription": "Tej operacji nie można cofnąć. Twoje główne CV zostanie trwale usunięte z systemu.",
+    "deleteResumeFromSystemDescription": "Tej operacji nie można cofnąć. CV zostanie trwale usunięte z systemu.",
+    "deleteResumeConfirmLabel": "Usuń CV",
+    "keepResumeCancelLabel": "Zachowaj CV",
+    "discardChanges": "Czy na pewno chcesz odrzucić zmiany?",
+    "discardChangesDescription": "Wszystkie niezapisane zmiany zostaną utracone.",
+    "clearApiKeys": "Wyczyścić wszystkie klucze API?",
+    "clearApiKeysDescription": "Czy na pewno chcesz usunąć wszystkie klucze API? Aby korzystać z funkcji AI, trzeba będzie wpisać je ponownie.",
+    "deleteAllTailoredResumesTitle": "Usuń dostosowane CV",
+    "deleteAllTailoredResumesDescription": "To trwale usunie wszystkie dostosowane CV. CV główne zostanie zachowane.",
+    "deleteAllTailoredResumesConfirmLabel": "Usuń wszystkie",
+    "resetDatabase": "Zresetować bazę danych i wyczyścić wszystkie dane?",
+    "resetDatabaseDescription": "To trwale usunie WSZYSTKIE CV, opisy ofert pracy i wygenerowane treści. Operacja jest nieodwracalna."
+  }
+}

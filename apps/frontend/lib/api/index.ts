@@ -57,6 +57,7 @@ export {
   buildSearchScrapeUrl,
   fetchSearchScrape,
   generateJobDescriptionFromSearchOffer,
+  getCompanyInfoFromSearchOffer,
   type OfferSource,
   type KeywordMode,
   type OfferSortBy,
@@ -70,4 +71,9 @@ export {
   type SearchScrapeParams,
   type SearchGenerateJobDescriptionRequest,
   type SearchGenerateJobDescriptionResponse,
+  type SearchCompanyInfoRequest,
+  type SearchCompanyInfoSourcePage,
+  type SearchCompanyInfoEvidence,
+  type SearchCompanyInfoStats,
+  type SearchCompanyInfoResponse,
 } from './search';
