@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { Suspense, useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -42,7 +42,7 @@ function buildTailorSectionUrl(resumeId: string, section: TailorSection): string
   return `/tailor?resumeId=${encodeURIComponent(resumeId)}&section=${section}`;
 }
 
-export default function TailorPage() {
+function TailorPageContent() {
   const { t } = useTranslations();
   const [jobDescription, setJobDescription] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -681,5 +681,15 @@ export default function TailorPage() {
         errorMessage={missingDiffError ?? undefined}
       />
     </div>
+  );
+}
+
+export default function TailorPage() {
+  const { t } = useTranslations();
+
+  return (
+    <Suspense fallback={<div>{t('common.loading')}</div>}>
+      <TailorPageContent />
+    </Suspense>
   );
 }

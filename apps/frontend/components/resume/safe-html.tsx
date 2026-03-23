@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { sanitizeHtml } from '@/lib/utils/html-sanitizer';
+import { sanitizeHtml, sanitizeHtmlFallback } from '@/lib/utils/html-sanitizer';
 import { cn } from '@/lib/utils';
 
 interface SafeHtmlProps {
@@ -27,8 +27,24 @@ export const SafeHtml: React.FC<SafeHtmlProps> = ({ html, className, as: Compone
     return null;
   }
 
-  // Sanitize the HTML before rendering
-  const cleanHtml = sanitizeHtml(html);
+  const [cleanHtml, setCleanHtml] = React.useState(() => sanitizeHtmlFallback(html));
+
+  React.useEffect(() => {
+    let cancelled = false;
+
+    const loadSanitizedHtml = async () => {
+      const sanitized = await sanitizeHtml(html);
+      if (!cancelled) {
+        setCleanHtml(sanitized);
+      }
+    };
+
+    void loadSanitizedHtml();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [html]);
 
   return (
     <Component

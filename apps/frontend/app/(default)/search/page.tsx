@@ -14,6 +14,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardDescription, CardTitle } from '@/components/ui/card';
+import { ToggleSwitch } from '@/components/ui/toggle-switch';
 import {
   EMPTY_SEARCH_SCRAPED_BY_SOURCE,
   buildSearchScrapeUrl,
@@ -1330,7 +1331,7 @@ export default function SearchPage() {
 
         <Card className="border-2 border-black bg-white shadow-[6px_6px_0px_0px_#000000]">
           <form onSubmit={onSubmit} className="space-y-5">
-            <div className="grid gap-4 md:grid-cols-[140px_1fr_160px_160px_140px]">
+            <div className="grid gap-4 md:grid-cols-[140px_1fr_160px]">
               <label className="space-y-1">
                 <span className="font-mono text-xs uppercase tracking-wider text-black">Limit</span>
                 <Input
@@ -1367,39 +1368,8 @@ export default function SearchPage() {
                   max={MAX_SCRAPE_TIMEOUT_SECONDS}
                   value={scrapeTimeoutSeconds}
                   onChange={(event) => setScrapeTimeoutSeconds(event.target.value)}
-                    placeholder="10"
-                  />
-                </label>
-
-              <label className="space-y-1">
-                <span className="font-mono text-xs uppercase tracking-wider text-black">
-                  Sort By
-                </span>
-                <select
-                  className="h-10 w-full rounded-none border border-black bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-700 disabled:cursor-not-allowed disabled:bg-[#E5E5E0] disabled:text-[#4B5563]"
-                  value={sortBy}
-                  disabled={loading}
-                  onChange={(event) => setSortBy(event.target.value as OfferSortBy)}
-                >
-                  <option value="relevance">relevance</option>
-                  <option value="name">name</option>
-                  <option value="salary">salary</option>
-                </select>
-              </label>
-
-              <label className="space-y-1">
-                <span className="font-mono text-xs uppercase tracking-wider text-black">
-                  Direction
-                </span>
-                <select
-                  className="h-10 w-full rounded-none border border-black bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-700 disabled:cursor-not-allowed disabled:bg-[#E5E5E0] disabled:text-[#4B5563]"
-                  value={sortDirection}
-                  disabled={loading}
-                  onChange={(event) => setSortDirection(event.target.value as OfferSortDirection)}
-                >
-                  <option value="asc">asc</option>
-                  <option value="desc">desc</option>
-                </select>
+                  placeholder="10"
+                />
               </label>
             </div>
 
@@ -1452,45 +1422,22 @@ export default function SearchPage() {
               </div>
 
               <div className="border-2 border-black bg-[#F0F0E8] p-4 shadow-[4px_4px_0px_0px_#000000]">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                  <div className="space-y-1">
-                    <p className="font-mono text-[11px] uppercase tracking-wider text-[#1D4ED8]">
-                      Resume generation option
-                    </p>
-                    <p className="font-sans text-sm text-[#4B5563]">
-                      Fetch additional company info before generating or prefilling a tailored
-                      resume.
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={fetchAdditionalCompanyInfo}
-                    disabled={Boolean(
-                      isBulkGenerating ||
-                      generatingOfferKey ||
-                      generatingEditOfferKey ||
-                      companyInfoLoadingKey
-                    )}
-                    onClick={() => setFetchAdditionalCompanyInfo((previous) => !previous)}
-                    className={`inline-flex items-center gap-3 self-start border-2 border-black px-3 py-2 font-mono text-[11px] uppercase tracking-wider transition-all lg:self-auto ${
-                      fetchAdditionalCompanyInfo
-                        ? 'bg-[#1D4ED8] text-white shadow-[2px_2px_0px_0px_#000000]'
-                        : 'bg-white text-black shadow-[2px_2px_0px_0px_#000000]'
-                    } disabled:cursor-not-allowed disabled:opacity-50`}
-                  >
-                    <span>{fetchAdditionalCompanyInfo ? 'On' : 'Off'}</span>
-                    <span
-                      className={`h-4 w-4 border border-black ${
-                        fetchAdditionalCompanyInfo ? 'bg-white' : 'bg-[#E5E5E0]'
-                      }`}
-                    />
-                    <span>Fetch additional company info</span>
-                  </button>
-                </div>
+                <ToggleSwitch
+                  checked={fetchAdditionalCompanyInfo}
+                  onCheckedChange={setFetchAdditionalCompanyInfo}
+                  disabled={Boolean(
+                    isBulkGenerating ||
+                    generatingOfferKey ||
+                    generatingEditOfferKey ||
+                    companyInfoLoadingKey
+                  )}
+                  label="Fetch additional company info"
+                  description="Fetch additional company info before generating or prefilling a tailored resume."
+                  className="border-0 bg-transparent p-0 shadow-none"
+                />
               </div>
 
-              <div className="flex flex-col gap-3 md:flex-row md:items-center">
+              <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end">
                 <Button
                   type="submit"
                   disabled={loading || isBulkGenerating}
@@ -1508,6 +1455,40 @@ export default function SearchPage() {
                     </>
                   )}
                 </Button>
+                <div className="grid gap-3 sm:grid-cols-2 md:min-w-[340px]">
+                  <label className="space-y-1">
+                    <span className="font-mono text-xs uppercase tracking-wider text-black">
+                      Sort By
+                    </span>
+                    <select
+                      className="h-10 w-full rounded-none border border-black bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-700 disabled:cursor-not-allowed disabled:bg-[#E5E5E0] disabled:text-[#4B5563]"
+                      value={sortBy}
+                      disabled={loading}
+                      onChange={(event) => setSortBy(event.target.value as OfferSortBy)}
+                    >
+                      <option value="relevance">relevance</option>
+                      <option value="name">name</option>
+                      <option value="salary">salary</option>
+                    </select>
+                  </label>
+
+                  <label className="space-y-1">
+                    <span className="font-mono text-xs uppercase tracking-wider text-black">
+                      Direction
+                    </span>
+                    <select
+                      className="h-10 w-full rounded-none border border-black bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-blue-700 disabled:cursor-not-allowed disabled:bg-[#E5E5E0] disabled:text-[#4B5563]"
+                      value={sortDirection}
+                      disabled={loading}
+                      onChange={(event) =>
+                        setSortDirection(event.target.value as OfferSortDirection)
+                      }
+                    >
+                      <option value="asc">asc</option>
+                      <option value="desc">desc</option>
+                    </select>
+                  </label>
+                </div>
                 {loading && (
                   <Button
                     type="button"
